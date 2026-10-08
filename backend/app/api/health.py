@@ -46,6 +46,8 @@ async def health_check() -> dict[str, Any]:
         status["services"]["fmp"] = {
             "status": "connected" if fmp_ok else "unreachable",
         }
+        if not fmp_ok and getattr(fmp, "last_error", None):
+            status["services"]["fmp"]["error"] = fmp.last_error
     except Exception as e:
         status["services"]["fmp"] = {"status": "error", "error": str(e)}
 

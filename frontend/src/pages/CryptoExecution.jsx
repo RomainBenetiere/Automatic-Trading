@@ -116,7 +116,7 @@ export default function CryptoExecution() {
           <div className="card-value" style={{
             color: (performance?.total_pnl_eur || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)'
           }}>
-            {performance ? `${performance.total_pnl_eur >= 0 ? '+' : ''}${performance.total_pnl_eur.toFixed(2)} €` : '—'}
+            {performance ? `${performance.total_pnl_eur >= 0 ? '+' : ''}${(performance.total_pnl_eur ?? 0).toFixed(2)} €` : '—'}
           </div>
           <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
             Last 30 days
@@ -129,7 +129,7 @@ export default function CryptoExecution() {
             <TrendingUp size={18} style={{ color: 'var(--color-buy)', opacity: 0.7 }} />
           </div>
           <div className="card-value">
-            {performance ? `${(performance.win_rate * 100).toFixed(0)}%` : '—'}
+            {performance ? `${((performance.win_rate ?? 0) * 100).toFixed(0)}%` : '—'}
           </div>
           <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
             {performance?.total_trades || 0} trades
@@ -142,10 +142,10 @@ export default function CryptoExecution() {
             <TrendingDown size={18} style={{ color: 'var(--color-sell)', opacity: 0.7 }} />
           </div>
           <div className="card-value" style={{ color: 'var(--color-sell)' }}>
-            {performance ? `−${performance.max_drawdown_pct.toFixed(1)}%` : '—'}
+            {performance ? `−${(performance.max_drawdown_pct ?? 0).toFixed(1)}%` : '—'}
           </div>
           <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
-            {performance ? `€${performance.max_drawdown_eur.toFixed(2)}` : ''}
+            {performance ? `€${(performance.max_drawdown_eur ?? 0).toFixed(2)}` : ''}
           </div>
         </div>
 
@@ -157,7 +157,7 @@ export default function CryptoExecution() {
           <div className="card-value" style={{
             color: (performance?.avg_pnl_per_trade || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)'
           }}>
-            {performance ? `${performance.avg_pnl_per_trade >= 0 ? '+' : ''}${performance.avg_pnl_per_trade.toFixed(2)} €` : '—'}
+            {performance ? `${performance.avg_pnl_per_trade >= 0 ? '+' : ''}${(performance.avg_pnl_per_trade ?? 0).toFixed(2)} €` : '—'}
           </div>
         </div>
       </div>

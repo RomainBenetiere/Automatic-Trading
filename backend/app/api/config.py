@@ -43,11 +43,18 @@ async def get_config() -> dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
         "synthesis_language": settings.synthesis_language,
+        # "configured" = a credential is set; live connectivity is reported by /api/health
         "services": {
             "ghostfolio_url": settings.ghostfolio_url,
-            "ghostfolio_connected": bool(settings.ghostfolio_token),
-            "fmp_connected": bool(settings.fmp_api_key),
-            "bitvavo_connected": bool(settings.bitvavo_api_key),
-            "gemini_connected": bool(settings.gemini_api_key),
+            "ghostfolio_configured": bool(settings.ghostfolio_token),
+            "fmp_configured": bool(settings.fmp_api_key),
+            "bitvavo_configured": bool(settings.bitvavo_api_key),
+            "llm_configured": bool(
+                {
+                    "gemini": settings.gemini_api_key,
+                    "openai": settings.openai_api_key,
+                    "anthropic": settings.anthropic_api_key,
+                }.get(settings.llm_provider)
+            ),
         },
     }

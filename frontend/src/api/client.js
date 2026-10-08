@@ -11,7 +11,12 @@ async function request(path, options = {}) {
     ...options,
   })
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`)
+    let detail = res.statusText
+    try {
+      const body = await res.json()
+      detail = body.detail || detail
+    } catch { /* non-JSON error body */ }
+    throw new Error(`API error ${res.status}: ${detail}`)
   }
   return res.json()
 }

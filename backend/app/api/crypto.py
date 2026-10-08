@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, desc, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,12 +35,22 @@ async def get_crypto_positions() -> list[dict[str, Any]]:
         price = client.get_ticker_price(market)
         ticker = client.get_ticker_24h(market)
 
+        # Bitvavo's ticker24h exposes open/last but no percentage field
+        change_24h = None
+        try:
+            open_px = float(ticker.get("open") or 0)
+            last_px = float(ticker.get("last") or price or 0)
+            if open_px > 0 and last_px > 0:
+                change_24h = round((last_px - open_px) / open_px * 100, 2)
+        except (TypeError, ValueError):
+            pass
+
         positions.append({
             **bal,
             "market": market,
             "current_price": price,
             "market_value_eur": bal["total"] * price if price else None,
-            "change_24h_pct": ticker.get("percentage"),
+            "change_24h_pct": change_24h,
         })
 
     return positions
@@ -100,7 +110,7 @@ async def get_order_detail(
     order = result.scalar_one_or_none()
 
     if not order:
-        return {"error": "Order not found"}
+        raise HTTPException(status_code=404, detail=f"Order not found: {order_id}")
 
     return {
         "id": order.id,
@@ -257,13 +267,19 @@ async def get_performance(
     closed_orders = result.scalars().all()
 
     if not closed_orders:
+        # Same shape as the populated response so the frontend never reads undefined
         return {
             "period_days": days,
             "total_trades": 0,
-            "total_pnl_eur": 0,
-            "win_rate": 0,
-            "avg_pnl_per_trade": 0,
-            "max_drawdown_pct": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "total_pnl_eur": 0.0,
+            "win_rate": 0.0,
+            "avg_pnl_per_trade": 0.0,
+            "best_trade_eur": 0.0,
+            "worst_trade_eur": 0.0,
+            "max_drawdown_eur": 0.0,
+            "max_drawdown_pct": 0.0,
         }
 
     total_trades = len(closed_orders)

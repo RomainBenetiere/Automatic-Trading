@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.composite import compute_composite, weights_to_json
@@ -100,24 +100,41 @@ async def run_crypto_daily_job() -> dict[str, Any]:
     basket = settings.crypto_basket_list
 
     async with async_session() as db:
-        # 1. Fetch balances
-        balances = bitvavo.get_balances()
-        balance_map = {b["symbol"]: b for b in balances}
+        # 1. Portfolio state — real balances in live mode, simulated portfolio in paper mode
+        price_cache: dict[str, float | None] = {}
 
-        # Get total portfolio value
-        portfolio_value = 0.0
-        for market in basket:
-            base_currency = market.split("-")[0]
-            bal = balance_map.get(base_currency, {})
-            price = bitvavo.get_ticker_price(market)
-            if price and bal:
-                portfolio_value += bal.get("total", 0) * price
+        def get_price(symbol: str) -> float | None:
+            if symbol not in price_cache:
+                price_cache[symbol] = bitvavo.get_ticker_price(symbol)
+            return price_cache[symbol]
 
-        # Add EUR balance
-        eur_balance = balance_map.get("EUR", {}).get("available", 0)
-        portfolio_value += eur_balance
+        position_values: dict[str, float] = {}
+        if settings.crypto_live_mode:
+            balances = bitvavo.get_balances()
+            balance_map = {b["symbol"]: b for b in balances}
+            portfolio_value = 0.0
+            for market in basket:
+                bal = balance_map.get(market.split("-")[0], {})
+                price = get_price(market)
+                if price and bal:
+                    position_values[market] = bal.get("total", 0) * price
+                    portfolio_value += position_values[market]
+            eur_balance = balance_map.get("EUR", {}).get("available", 0)
+            portfolio_value += eur_balance
+        else:
+            paper_state = await PaperTrader(db).get_paper_state(get_price)
+            eur_balance = paper_state["cash_eur"]
+            portfolio_value = paper_state["portfolio_value_eur"]
+            position_values = {
+                s: p["value_eur"] for s, p in paper_state["positions"].items()
+            }
 
-        logger.info("Crypto portfolio value: €%.2f (EUR available: €%.2f)", portfolio_value, eur_balance)
+        logger.info(
+            "Crypto portfolio value (%s): €%.2f (EUR available: €%.2f)",
+            "live" if settings.crypto_live_mode else "paper",
+            portfolio_value,
+            eur_balance,
+        )
 
         # 2. For each asset in the basket
         for market in basket:
@@ -146,8 +163,11 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                 fund_score = 50.0  # Neutral for crypto
                 div_score = 50.0   # N/A for crypto
 
+                # Crypto has no fundamentals/dividends: score on technicals only,
+                # otherwise the neutral 50s compress the composite into 15–85.
                 composite = compute_composite(
-                    tech_score, fund_score, div_score, asset_type="crypto"
+                    tech_score, fund_score, div_score, asset_type="crypto",
+                    weight_override=(1.0, 0.0, 0.0),
                 )
 
                 # Store score
@@ -187,12 +207,12 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                     db.add(md)
 
                 # 3. Run strategy
-                current_price = bitvavo.get_ticker_price(market) or df.iloc[-1]["close"]
-                position_bal = balance_map.get(base_currency, {})
-                position_value = position_bal.get("total", 0) * current_price
+                current_price = get_price(market) or float(df.iloc[-1]["close"])
+                position_value = position_values.get(market, 0.0)
 
-                # Available budget = min(EUR balance, remaining global budget)
-                available_budget = min(eur_balance, settings.crypto_global_budget_eur)
+                # Available budget = min(EUR cash, global budget). eur_balance is
+                # decremented after each buy so one run cannot overspend.
+                available_budget = max(0.0, min(eur_balance, settings.crypto_global_budget_eur))
 
                 action = decide_crypto_action(
                     symbol=market,
@@ -207,10 +227,16 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                 if action:
                     if settings.crypto_live_mode:
                         trader = LiveTrader(db, bitvavo)
-                        order = await trader.execute_action(action, current_price, portfolio_value)
                     else:
                         trader = PaperTrader(db)
-                        order = await trader.execute_action(action, current_price, portfolio_value)
+                    order = await trader.execute_action(action, current_price, portfolio_value)
+
+                    executed = (
+                        order is not None
+                        and order.status not in (OrderStatus.CANCELLED, OrderStatus.FAILED)
+                    )
+                    if executed and action.side == "buy":
+                        eur_balance -= order.order_value_eur or 0.0
 
                     results["actions"].append({
                         "symbol": market,
@@ -218,6 +244,7 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                         "signal": composite.signal,
                         "score": composite.composite_score,
                         "order_id": order.id if order else None,
+                        "status": order.status.value if order else "skipped",
                     })
                 else:
                     results["actions"].append({
@@ -238,10 +265,6 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                 triggered = await live_trader.check_open_positions()
             else:
                 paper_trader = PaperTrader(db)
-
-                def get_price(symbol: str) -> float | None:
-                    return bitvavo.get_ticker_price(symbol)
-
                 triggered = await paper_trader.check_open_positions(get_price)
 
             if triggered:
@@ -287,7 +310,8 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
             holdings = await ghostfolio.get_holdings()
             logger.info("Fetched %d holdings from Ghostfolio", len(holdings))
 
-            # Store positions
+            # Store positions (replace any snapshot already taken today)
+            await db.execute(delete(Position).where(Position.snapshot_date == date.today()))
             for h in holdings:
                 position = Position(**h)
                 db.add(position)
@@ -347,16 +371,26 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
 
                     # Dividend analysis
                     div_history = await fmp.get_dividend_history(symbol)
-                    div_yield = None
-                    payout_ratio = None
-                    if key_metrics:
-                        div_yield = key_metrics[0].get("dividendYield")
-                        if div_yield:
-                            div_yield = float(div_yield) * 100  # Convert to percentage
-                    if ratios:
-                        payout_ratio = ratios[0].get("payoutRatio")
-                        if payout_ratio:
-                            payout_ratio = float(payout_ratio) * 100
+                    km0 = key_metrics[0] if key_metrics else {}
+                    r0 = ratios[0] if ratios else {}
+                    # Legacy v3 names first, then /stable names.
+                    # dividendYield is a fraction; dividendYieldPercentage is already in %.
+                    raw_yield = next(
+                        (v for v in (km0.get("dividendYield"), r0.get("dividendYield")) if v is not None),
+                        None,
+                    )
+                    if raw_yield is not None:
+                        div_yield = float(raw_yield) * 100
+                    elif r0.get("dividendYieldPercentage") is not None:
+                        div_yield = float(r0["dividendYieldPercentage"])
+                    else:
+                        div_yield = None
+                    payout_ratio = next(
+                        (v for v in (r0.get("payoutRatio"), r0.get("dividendPayoutRatio")) if v is not None),
+                        None,
+                    )
+                    if payout_ratio is not None:
+                        payout_ratio = float(payout_ratio) * 100
 
                     div_score, div_breakdown = score_dividend(
                         dividend_yield=div_yield,

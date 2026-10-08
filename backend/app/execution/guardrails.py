@@ -71,10 +71,13 @@ class GuardrailChecker:
         new_order_value_eur: float,
     ) -> GuardrailCheck:
         """Ensure total committed doesn't exceed the global crypto budget."""
-        # Sum all open/pending order values
+        # Sum all open/pending order values (paper lots count when in paper mode)
+        statuses = [OrderStatus.PENDING, OrderStatus.FILLED]
+        if not settings.crypto_live_mode:
+            statuses.append(OrderStatus.PAPER)
         stmt = select(Order).where(
             and_(
-                Order.status.in_([OrderStatus.PENDING, OrderStatus.FILLED]),
+                Order.status.in_(statuses),
                 Order.side == OrderSide.BUY,
                 Order.closed_at.is_(None),
             )

@@ -126,7 +126,7 @@ class FMPClient:
 
     async def get_etf_info(self, symbol: str) -> dict[str, Any]:
         """Fetch ETF information (expense ratio, AUM, etc.)."""
-        data = await self._get("etf-info", {"symbol": symbol})
+        data = await self._get("etf/info", {"symbol": symbol})
         if isinstance(data, list) and data:
             return data[0]
         return data if isinstance(data, dict) else {}
@@ -164,7 +164,7 @@ class FMPClient:
     ) -> list[dict[str, Any]]:
         """Fetch recent news articles for a symbol."""
         data = await self._get(
-            "stock-news", {"tickers": symbol, "limit": str(limit)}
+            "news/stock", {"symbols": symbol, "limit": str(limit)}
         )
         news = data if isinstance(data, list) else []
         logger.info("FMP: fetched %d news articles for %s", len(news), symbol)
@@ -173,11 +173,25 @@ class FMPClient:
     # ── Lifecycle ───────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
-        """Check if FMP API is reachable and the key is valid."""
+        """Check if FMP API is reachable and the key is valid.
+
+        On failure, the reason is stored in ``self.last_error``.
+        """
+        self.last_error: str | None = None
+        if not self.api_key:
+            self.last_error = "FMP_API_KEY is not set"
+            return False
         try:
             data = await self._get("quote", {"symbol": "AAPL"})
+            if not data:
+                self.last_error = "Empty response from FMP"
             return bool(data)
-        except Exception:
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:200]
+            self.last_error = f"HTTP {e.response.status_code}: {body}"
+            return False
+        except Exception as e:
+            self.last_error = str(e).replace(self.api_key, "***")
             return False
 
     async def close(self) -> None:

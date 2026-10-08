@@ -81,8 +81,22 @@ def decide_crypto_action(
             available_budget_eur,
         )
 
-        if order_value < 5.0:  # Minimum order size
-            return None
+        # Bitvavo minimum order is €5. Bump small orders up to the minimum
+        # when the per-trade cap and available budget still allow it.
+        min_order = 5.0
+        if order_value < min_order:
+            max_allowed = min(
+                portfolio_value_eur * settings.crypto_per_trade_cap_pct / 100,
+                available_budget_eur,
+            )
+            if max_allowed >= min_order:
+                order_value = min_order
+            else:
+                logger.info(
+                    "Strategy: %s buy skipped — €%.2f below €%.0f minimum "
+                    "(max allowed €%.2f)", symbol, order_value, min_order, max_allowed,
+                )
+                return None
 
         return TradeAction(
             symbol=symbol,

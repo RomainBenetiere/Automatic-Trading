@@ -59,6 +59,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 export default function Dashboard() {
   const [syncing, setSyncing] = useState(false)
   const [triggering, setTriggering] = useState(false)
+  const [actionError, setActionError] = useState(null)
 
   const { data: latestScores, loading: scoresLoading, refetch: refetchScores } = usePolling(
     useCallback(() => scores.getLatest(), []),
@@ -75,19 +76,27 @@ export default function Dashboard() {
 
   const handleSync = async () => {
     setSyncing(true)
+    setActionError(null)
     try {
       await portfolio.sync()
       refetchScores()
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      console.error(e)
+      setActionError(e.message)
+    }
     setSyncing(false)
   }
 
   const handleTrigger = async () => {
     setTriggering(true)
+    setActionError(null)
     try {
       await jobs.triggerStocks()
       refetchScores()
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      console.error(e)
+      setActionError(e.message)
+    }
     setTriggering(false)
   }
 
@@ -128,6 +137,12 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {actionError && (
+        <div className="card" style={{ borderColor: 'var(--color-sell)', color: 'var(--color-sell)', marginBottom: 16 }}>
+          {actionError}
+        </div>
+      )}
 
       {/* Account Summary Cards */}
       <div className="summary-grid">

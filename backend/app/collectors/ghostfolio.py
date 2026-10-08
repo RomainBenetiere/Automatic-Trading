@@ -94,14 +94,16 @@ class GhostfolioClient:
             if not symbol:
                 continue
 
-            # Determine asset type
-            asset_class = item.get("assetClass", "").upper()
-            asset_sub_class = item.get("assetSubClass", "").upper()
+            # Determine asset type (Ghostfolio may send null for either field)
+            asset_class = (item.get("assetClass") or "").upper()
+            asset_sub_class = (item.get("assetSubClass") or "").upper()
+            if asset_sub_class == "CASH":
+                continue  # cash balances are not analysable assets
             if asset_sub_class == "ETF":
                 asset_type = AssetType.ETF
-            elif asset_sub_class == "BOND":
+            elif asset_sub_class == "BOND" or asset_class == "FIXED_INCOME":
                 asset_type = AssetType.BOND
-            elif asset_class == "CRYPTOCURRENCY":
+            elif "CRYPTOCURRENCY" in (asset_class, asset_sub_class):
                 asset_type = AssetType.CRYPTO
             else:
                 asset_type = ASSET_TYPE_MAP.get(asset_class, AssetType.STOCK)
@@ -120,7 +122,7 @@ class GhostfolioClient:
                     "name": item.get("name", symbol),
                     "asset_type": asset_type,
                     "account_type": account_type,
-                    "quantity": float(item.get("quantity", 0)),
+                    "quantity": float(item.get("quantity") or 0),
                     "avg_cost": item.get("averagePrice"),
                     "current_price": item.get("marketPrice"),
                     "currency": item.get("currency", "EUR"),
@@ -173,10 +175,10 @@ class GhostfolioClient:
     # ── Lifecycle ───────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
-        """Check if the Ghostfolio instance is reachable."""
+        """Check that Ghostfolio is reachable AND the security token is valid."""
         try:
-            resp = await self._client.get(f"{self.base_url}/api/v1/info")
-            return resp.status_code == 200
+            await self._authenticate()
+            return bool(self._jwt_token)
         except Exception:
             return False
 

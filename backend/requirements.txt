@@ -19,7 +19,7 @@ numpy==2.2.5
 ta==0.11.0
 
 # Bitvavo SDK
-python-bitvavo-api==1.5.0
+python-bitvavo-api==1.4.3
 
 # LLM providers
 google-genai==1.14.0

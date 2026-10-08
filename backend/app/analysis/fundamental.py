@@ -220,11 +220,24 @@ def score_fundamental(
     latest_metrics = key_metrics[0] if key_metrics else {}
     latest_ratios = ratios[0] if ratios else {}
 
+    def pick(*names: str) -> Any:
+        """First non-null value among legacy (v3) and /stable field names."""
+        for src in (latest_metrics, latest_ratios):
+            for n in names:
+                v = src.get(n)
+                if v is not None:
+                    return v
+        return None
+
+    pe = pick("peRatio", "priceToEarningsRatio", "priceEarningsRatio")
+    pb = pick("pbRatio", "priceToBookRatio")
+    ev_ebitda = pick("enterpriseValueOverEBITDA", "evToEBITDA", "enterpriseValueMultiple")
+
     # ── Valuation ──────────────────────────────────────────────────
-    breakdown.pe_score = _score_pe(latest_metrics.get("peRatio"))
-    breakdown.pb_score = _score_pb(latest_metrics.get("pbRatio"))
+    breakdown.pe_score = _score_pe(float(pe) if pe is not None else None)
+    breakdown.pb_score = _score_pb(float(pb) if pb is not None else None)
     breakdown.ev_ebitda_score = _score_ev_ebitda(
-        latest_metrics.get("enterpriseValueOverEBITDA")
+        float(ev_ebitda) if ev_ebitda is not None else None
     )
 
     # ── Growth ─────────────────────────────────────────────────────
@@ -236,12 +249,12 @@ def score_fundamental(
     breakdown.earnings_growth_score = _score_earnings_growth(growth_rates)
 
     # ── Quality ────────────────────────────────────────────────────
-    op_margin = latest_ratios.get("operatingProfitMargin")
+    op_margin = pick("operatingProfitMargin")
     if op_margin is not None:
         op_margin = float(op_margin) * 100  # Convert to percentage
     breakdown.margin_score = _score_margins(op_margin)
 
-    debt_eq = latest_ratios.get("debtEquityRatio")
+    debt_eq = pick("debtEquityRatio", "debtToEquityRatio")
     breakdown.debt_score = _score_debt(
         float(debt_eq) if debt_eq is not None else None
     )
@@ -284,12 +297,12 @@ def score_fundamental(
     )
 
     breakdown.details = {
-        "pe_ratio": latest_metrics.get("peRatio"),
-        "pb_ratio": latest_metrics.get("pbRatio"),
-        "ev_ebitda": latest_metrics.get("enterpriseValueOverEBITDA"),
+        "pe_ratio": pe,
+        "pb_ratio": pb,
+        "ev_ebitda": ev_ebitda,
         "growth_rates": growth_rates,
         "operating_margin_pct": op_margin,
-        "debt_equity": latest_ratios.get("debtEquityRatio"),
+        "debt_equity": debt_eq,
         "news_count": len(news),
         "is_etf": is_etf,
     }

@@ -7,8 +7,10 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.execution.guardrails import GuardrailChecker
 from app.execution.strategy import TradeAction, should_trigger_stop
 from app.models.order import Order, OrderSide, OrderStatus
@@ -89,6 +91,10 @@ class PaperTrader:
                 await self.db.flush()
                 return order
 
+        # Paper SELL: close open paper lots for this symbol (FIFO) at the current price
+        if action.side == "sell":
+            return await self._close_lots_for_sell(action, current_price)
+
         # Compute stop/take-profit levels for buys
         stop_loss = None
         take_profit = None
@@ -126,6 +132,105 @@ class PaperTrader:
             order_value,
             stop_loss or 0,
             take_profit or 0,
+        )
+        return order
+
+    # ── Virtual paper portfolio ─────────────────────────────────────
+
+    async def _open_lots(self, symbol: str | None = None) -> list[Order]:
+        """Open paper BUY lots (oldest first), optionally for a single symbol."""
+        stmt = select(Order).where(
+            and_(
+                Order.paper_mode == True,  # noqa: E712
+                Order.side == OrderSide.BUY,
+                Order.status == OrderStatus.PAPER,
+                Order.closed_at.is_(None),
+            )
+        )
+        if symbol:
+            stmt = stmt.where(Order.symbol == symbol)
+        result = await self.db.execute(stmt.order_by(Order.created_at, Order.id))
+        return list(result.scalars().all())
+
+    async def get_paper_state(self, get_price_fn) -> dict[str, Any]:
+        """Compute the simulated paper portfolio.
+
+        Starting capital = CRYPTO_GLOBAL_BUDGET_EUR.
+        cash = start + realised P&L of closed lots − cost of open lots.
+        """
+        start = settings.crypto_global_budget_eur
+
+        closed = await self.db.execute(
+            select(func.coalesce(func.sum(Order.realised_pnl), 0.0)).where(
+                and_(
+                    Order.paper_mode == True,  # noqa: E712
+                    Order.side == OrderSide.BUY,
+                    Order.status == OrderStatus.PAPER,
+                    Order.closed_at.is_not(None),
+                )
+            )
+        )
+        realised = float(closed.scalar() or 0.0)
+
+        positions: dict[str, dict[str, float]] = {}
+        open_cost = 0.0
+        for lot in await self._open_lots():
+            open_cost += lot.order_value_eur or 0.0
+            pos = positions.setdefault(lot.symbol, {"quantity": 0.0, "value_eur": 0.0})
+            pos["quantity"] += lot.quantity or 0.0
+
+        for symbol, pos in positions.items():
+            price = get_price_fn(symbol) or 0.0
+            pos["value_eur"] = pos["quantity"] * price
+
+        cash = start + realised - open_cost
+        portfolio_value = cash + sum(p["value_eur"] for p in positions.values())
+        return {
+            "cash_eur": cash,
+            "positions": positions,
+            "portfolio_value_eur": portfolio_value,
+            "realised_pnl_eur": realised,
+        }
+
+    async def _close_lots_for_sell(self, action: TradeAction, current_price: float) -> Order | None:
+        """Close whole open lots FIFO until the requested quantity is covered."""
+        lots = await self._open_lots(action.symbol)
+        if not lots or current_price <= 0:
+            logger.info("Paper SELL %s skipped — no open paper lots", action.symbol)
+            return None
+
+        target_qty = action.quantity or sum(l.quantity or 0 for l in lots)
+        closed_qty = 0.0
+        total_pnl = 0.0
+        now = datetime.utcnow()
+        for lot in lots:
+            if closed_qty >= target_qty * 0.999:
+                break
+            pnl = (current_price - (lot.price or 0)) * (lot.quantity or 0)
+            lot.realised_pnl = round(pnl, 2)
+            lot.closed_at = now
+            lot.justification = f"{lot.justification} | CLOSED: {action.reason}"
+            closed_qty += lot.quantity or 0
+            total_pnl += pnl
+
+        # Audit record of the sell itself (P&L lives on the closed BUY lots)
+        order = Order(
+            symbol=action.symbol,
+            side=OrderSide.SELL,
+            quantity=round(closed_qty, 8),
+            price=current_price,
+            order_value_eur=round(closed_qty * current_price, 2),
+            status=OrderStatus.PAPER,
+            paper_mode=True,
+            justification=f"{action.reason} (realised €{total_pnl:.2f})",
+            signals_snapshot=json.dumps(action.signals_snapshot),
+            executed_at=now,
+        )
+        self.db.add(order)
+        await self.db.flush()
+        logger.info(
+            "Paper SELL %s: closed %.8f @ %.2f — PnL €%.2f",
+            action.symbol, closed_qty, current_price, total_pnl,
         )
         return order
 

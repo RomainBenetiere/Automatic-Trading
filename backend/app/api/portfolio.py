@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, desc
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -78,7 +78,7 @@ async def get_position_detail(
     position = result.scalar_one_or_none()
 
     if not position:
-        return {"error": "Position not found", "symbol": symbol}
+        raise HTTPException(status_code=404, detail=f"Position not found: {symbol}")
 
     return {
         "id": position.id,
@@ -98,16 +98,17 @@ async def get_position_detail(
 
 @router.post("/sync")
 async def sync_positions(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    """Trigger a manual Ghostfolio sync."""
+    """Trigger a manual Ghostfolio sync (replaces today's snapshot)."""
     client = GhostfolioClient()
     try:
         holdings = await client.get_holdings()
-        for h in holdings:
-            position = Position(**h)
-            db.add(position)
-        await db.commit()
-        return {"status": "ok", "synced": len(holdings)}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        raise HTTPException(status_code=502, detail=f"Ghostfolio sync failed: {e}")
     finally:
         await client.close()
+
+    await db.execute(delete(Position).where(Position.snapshot_date == date.today()))
+    for h in holdings:
+        db.add(Position(**h))
+    await db.commit()
+    return {"status": "ok", "synced": len(holdings)}

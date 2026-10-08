@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     weights_stocks: str = "40,35,25"
     weights_etfs: str = "35,30,35"
     weights_bonds: str = "20,30,50"
-    weights_crypto: str = "70,0,30"
+    weights_crypto: str = "100,0,0"
 
     # ── Synthesis language ──────────────────────────────────────────────
     synthesis_language: str = Field(default="fr", pattern=r"^(fr|en)$")
