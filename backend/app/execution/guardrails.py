@@ -251,18 +251,80 @@ class GuardrailChecker:
         effective_high = max(current_price, highest_since_entry)
         return effective_high * (1 - settings.crypto_trailing_stop_pct / 100)
 
+# ── Repeat buys & Max allocation ────────────────────────────────
+
+    async def check_repeat_buy(self, symbol: str) -> GuardrailCheck:
+        """Prevent buying the same asset repeatedly within a short timeframe."""
+        if settings.crypto_buy_cooldown_days <= 0:
+            return GuardrailCheck(passed=True, guardrail="repeat_buy", message="Cooldown disabled")
+
+        cutoff = datetime.utcnow() - timedelta(days=settings.crypto_buy_cooldown_days)
+        statuses = [OrderStatus.PENDING, OrderStatus.FILLED]
+        if not settings.crypto_live_mode:
+            statuses.append(OrderStatus.PAPER)
+
+        stmt = select(Order).where(
+            and_(
+                Order.symbol == symbol,
+                Order.side == OrderSide.BUY,
+                Order.created_at >= cutoff,
+                Order.status.in_(statuses)
+            )
+        )
+        result = await self.db.execute(stmt)
+        recent_buys = result.scalars().all()
+
+        passed = len(recent_buys) == 0
+        message = (
+            f"No recent buys in last {settings.crypto_buy_cooldown_days} days"
+            if passed else
+            f"Bought {len(recent_buys)} times in last {settings.crypto_buy_cooldown_days} days"
+        )
+        check = GuardrailCheck(passed=passed, guardrail="repeat_buy", message=message, details={"recent_buys_count": len(recent_buys)})
+        logger.info("Guardrail [repeat_buy]: %s — %s", "PASS" if passed else "FAIL", message)
+        return check
+
+    def check_max_allocation(
+        self,
+        symbol: str,
+        current_position_value_eur: float,
+        portfolio_value_eur: float,
+        new_order_value_eur: float,
+    ) -> GuardrailCheck:
+        """Ensure the total position value doesn't exceed the max allocation cap."""
+        if portfolio_value_eur <= 0:
+            return GuardrailCheck(passed=True, guardrail="max_allocation", message="Empty portfolio")
+        
+        projected_value = current_position_value_eur + new_order_value_eur
+        projected_pct = (projected_value / portfolio_value_eur) * 100
+        max_pct = settings.crypto_max_allocation_pct
+
+        passed = projected_pct <= max_pct
+        message = (
+            f"Projected allocation {projected_pct:.1f}% "
+            f"({'OK' if passed else f'exceeds {max_pct}% cap'})"
+        )
+        check = GuardrailCheck(passed=passed, guardrail="max_allocation", message=message, details={"projected_pct": projected_pct, "max_pct": max_pct})
+        if new_order_value_eur > 0:
+            logger.info("Guardrail [max_allocation]: %s — %s", "PASS" if passed else "FAIL", message)
+        return check
+
     # ── Full pre-trade check ────────────────────────────────────────
 
     async def run_all_checks(
         self,
+        symbol: str,
         order_value_eur: float,
         portfolio_value_eur: float,
+        current_position_value_eur: float = 0.0,
     ) -> list[GuardrailCheck]:
         """Run all guardrail checks. Returns list of results (all must pass)."""
         checks = [
             self.check_per_trade_cap(order_value_eur, portfolio_value_eur),
             await self.check_global_budget(order_value_eur),
             await self.check_circuit_breaker(),
+            await self.check_repeat_buy(symbol),
+            self.check_max_allocation(symbol, current_position_value_eur, portfolio_value_eur, order_value_eur)
         ]
         return checks
 

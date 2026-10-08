@@ -42,6 +42,7 @@ class LiveTrader:
         action: TradeAction,
         current_price: float,
         portfolio_value_eur: float,
+        current_position_value_eur: float = 0.0,
     ) -> Order | None:
         """Execute a live trade via Bitvavo.
 
@@ -83,7 +84,7 @@ class LiveTrader:
 
         # Run guardrail checks for buys
         if action.side == "buy":
-            checks = await self.guardrails.run_all_checks(order_value, portfolio_value_eur)
+            checks = await self.guardrails.run_all_checks(action.symbol, order_value, portfolio_value_eur, current_position_value_eur)
             if not self.guardrails.all_passed(checks):
                 failed = [c for c in checks if not c.passed]
                 rejection = "; ".join(c.message for c in failed)

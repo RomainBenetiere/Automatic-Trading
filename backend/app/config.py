@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     crypto_circuit_breaker_cumulative_loss_pct: float = Field(default=15.0, ge=1.0, le=100.0)
     crypto_circuit_breaker_window_days: int = Field(default=7, ge=1, le=90)
     crypto_global_budget_eur: float = Field(default=1000.0, ge=0.0)
+    crypto_buy_cooldown_days: int = Field(default=3, ge=0, le=30)
+    crypto_max_allocation_pct: float = Field(default=20.0, ge=1.0, le=100.0)
 
     # ── Crypto basket ───────────────────────────────────────────────────
     crypto_basket: str = "BTC-EUR,ETH-EUR,SOL-EUR,XRP-EUR,ADA-EUR"

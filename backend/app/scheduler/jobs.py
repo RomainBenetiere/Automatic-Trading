@@ -234,7 +234,7 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                         trader = LiveTrader(db, bitvavo)
                     else:
                         trader = PaperTrader(db)
-                    order = await trader.execute_action(action, current_price, portfolio_value)
+                    order = await trader.execute_action(action, current_price, portfolio_value, position_value)
 
                     executed = (
                         order is not None
