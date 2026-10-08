@@ -32,6 +32,8 @@ async def test_ghostfolio_holdings_handles_nulls_and_classes(monkeypatch):
     client = GhostfolioClient(base_url="http://x", security_token="t")
 
     async def fake_get(path, params=None):
+        if path == "/api/v1/account":
+            return {"accounts": [{"id": "1", "name": "pea"}]}
         return payload
 
     monkeypatch.setattr(client, "_get", fake_get)

@@ -82,55 +82,61 @@ class GhostfolioClient:
     # ── Portfolio data ──────────────────────────────────────────────────
 
     async def get_holdings(self) -> list[dict[str, Any]]:
-        """Fetch current portfolio holdings.
+        """Fetch current portfolio holdings per account.
 
         Returns a list of normalised holding dicts ready for Position model creation.
         """
-        data = await self._get("/api/v1/portfolio/holdings")
+        accounts = await self.get_accounts()
         holdings = []
 
-        for item in data.get("holdings", data) if isinstance(data, dict) else data:
-            symbol = item.get("symbol", "")
-            if not symbol:
-                continue
+        if not accounts:
+            logger.warning("Ghostfolio: no accounts found. Falling back to global holdings.")
+            accounts = [{"id": None, "name": "brokerage"}]
 
-            # Determine asset type (Ghostfolio may send null for either field)
-            asset_class = (item.get("assetClass") or "").upper()
-            asset_sub_class = (item.get("assetSubClass") or "").upper()
-            if asset_sub_class == "CASH":
-                continue  # cash balances are not analysable assets
-            if asset_sub_class == "ETF":
-                asset_type = AssetType.ETF
-            elif asset_sub_class == "BOND" or asset_class == "FIXED_INCOME":
-                asset_type = AssetType.BOND
-            elif "CRYPTOCURRENCY" in (asset_class, asset_sub_class):
-                asset_type = AssetType.CRYPTO
-            else:
-                asset_type = ASSET_TYPE_MAP.get(asset_class, AssetType.STOCK)
-
-            # Determine account type from account name
-            account_name = item.get("account", {})
-            if isinstance(account_name, dict):
-                account_name = account_name.get("name", "brokerage")
+        for account in accounts:
+            account_id = account.get("id")
+            account_name = account.get("name", "brokerage")
             account_type = ACCOUNT_TYPE_MAP.get(
                 str(account_name).lower(), AccountType.BROKERAGE
             )
 
-            holdings.append(
-                {
-                    "symbol": symbol,
-                    "name": item.get("name", symbol),
-                    "asset_type": asset_type,
-                    "account_type": account_type,
-                    "quantity": float(item.get("quantity") or 0),
-                    "avg_cost": item.get("averagePrice"),
-                    "current_price": item.get("marketPrice"),
-                    "currency": item.get("currency", "EUR"),
-                    "snapshot_date": date.today(),
-                }
-            )
+            params = {"accounts": account_id} if account_id else None
+            data = await self._get("/api/v1/portfolio/holdings", params=params)
 
-        logger.info("Ghostfolio: fetched %d holdings", len(holdings))
+            for item in data.get("holdings", data) if isinstance(data, dict) else data:
+                symbol = item.get("symbol", "")
+                if not symbol:
+                    continue
+
+                # Determine asset type (Ghostfolio may send null for either field)
+                asset_class = (item.get("assetClass") or "").upper()
+                asset_sub_class = (item.get("assetSubClass") or "").upper()
+                if asset_sub_class == "CASH":
+                    continue  # cash balances are not analysable assets
+                if asset_sub_class == "ETF":
+                    asset_type = AssetType.ETF
+                elif asset_sub_class == "BOND" or asset_class == "FIXED_INCOME":
+                    asset_type = AssetType.BOND
+                elif "CRYPTOCURRENCY" in (asset_class, asset_sub_class):
+                    asset_type = AssetType.CRYPTO
+                else:
+                    asset_type = ASSET_TYPE_MAP.get(asset_class, AssetType.STOCK)
+
+                holdings.append(
+                    {
+                        "symbol": symbol,
+                        "name": item.get("name", symbol),
+                        "asset_type": asset_type,
+                        "account_type": account_type,
+                        "quantity": float(item.get("quantity") or 0),
+                        "avg_cost": item.get("averagePrice"),
+                        "current_price": item.get("marketPrice"),
+                        "currency": item.get("currency", "EUR"),
+                        "snapshot_date": date.today(),
+                    }
+                )
+
+        logger.info("Ghostfolio: fetched %d holdings across %d accounts", len(holdings), len(accounts))
         return holdings
 
     async def get_accounts(self) -> list[dict[str, Any]]:
