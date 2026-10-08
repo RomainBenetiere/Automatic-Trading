@@ -22,14 +22,15 @@ export default function Settings() {
     30000
   )
 
-  const handleTrigger = async (jobType) => {
-    setTriggering(prev => ({ ...prev, [jobType]: true }))
+  const handleTrigger = async (jobId) => {
+    setTriggering(prev => ({ ...prev, [jobId]: true }))
     try {
-      if (jobType === 'crypto') await jobs.triggerCrypto()
+      if (jobId.includes('crypto')) await jobs.triggerCrypto()
+      else if (jobId.includes('optimizer')) await jobs.triggerOptimizer()
       else await jobs.triggerStocks()
       refetchJobs()
     } catch (e) { console.error(e) }
-    setTriggering(prev => ({ ...prev, [jobType]: false }))
+    setTriggering(prev => ({ ...prev, [jobId]: false }))
   }
 
   const StatusDot = ({ status }) => {
@@ -151,7 +152,7 @@ export default function Settings() {
                 </div>
                 <button
                   className="btn btn-secondary"
-                  onClick={() => handleTrigger(job.id.includes('crypto') ? 'crypto' : 'stocks')}
+                  onClick={() => handleTrigger(job.id)}
                   disabled={triggering[job.id]}
                 >
                   <Play size={14} />
