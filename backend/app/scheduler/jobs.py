@@ -37,6 +37,8 @@ from app.models.order import Order, OrderSide, OrderStatus
 from app.models.position import AccountType, AssetType, Position
 from app.models.recommendation import ActionType, Recommendation
 from app.models.score import Score
+from app.models.indicator_config import IndicatorConfig
+from app.analysis.optimizer import optimize_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +157,10 @@ async def run_crypto_daily_job() -> dict[str, Any]:
 
                 # Compute indicators
                 regime = classify_volatility(df)
-                params = get_params(regime)
+                # Fetch optimized overrides
+                config = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
+                db_overrides = json.loads(config.parameters) if config and config.parameters else None
+                params = get_params(regime, db_overrides)
                 df = compute_indicators(df, params)
 
                 # Score
@@ -348,7 +353,10 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
 
                     # Technical analysis
                     regime = classify_volatility(df)
-                    params = get_params(regime)
+                    # Fetch optimized overrides
+                    config = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
+                    db_overrides = json.loads(config.parameters) if config and config.parameters else None
+                    params = get_params(regime, db_overrides)
                     df = compute_indicators(df, params)
                     tech_score, tech_signals = score_technical(df)
 
@@ -505,4 +513,87 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
         "═══ STOCKS WEEKLY JOB END — %d recommendations ═══",
         len(results["recommendations"]),
     )
+    return results
+
+
+# ── Weekly optimizer job ────────────────────────────────────────────────
+
+async def run_optimizer_weekly_job() -> dict[str, Any]:
+    """Weekly walk-forward parameter optimization job."""
+    logger.info("═══ OPTIMIZER WEEKLY JOB START ═══")
+    results: dict[str, Any] = {"timestamp": datetime.utcnow().isoformat(), "optimizations": []}
+
+    bitvavo = BitvavoClient()
+    fmp = FMPClient()
+
+    async with async_session() as db:
+        try:
+            # 1. Crypto Basket
+            for market in settings.crypto_basket_list:
+                try:
+                    logger.info("Optimizing %s (Crypto)", market)
+                    candles = bitvavo.get_candles(market, interval="1d", limit=500)
+                    if len(candles) < 100:
+                        continue
+                    df = pd.DataFrame(candles).rename(columns={"datetime": "date"}).set_index("date")
+                    
+                    opt = optimize_parameters(df, market)
+                    if opt.improved:
+                        cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
+                        if not cfg:
+                            cfg = IndicatorConfig(symbol=market, indicator_name="all")
+                            db.add(cfg)
+                        cfg.parameters = json.dumps(opt.best_params)
+                        cfg.last_optimized_at = datetime.utcnow()
+                        cfg.oos_sharpe = opt.oos_sharpe
+                        cfg.oos_sortino = opt.oos_sortino
+                        cfg.oos_return = opt.oos_return
+                        
+                        results["optimizations"].append({"symbol": market, "improved": True, "oos_sharpe": opt.oos_sharpe})
+                except Exception as e:
+                    logger.exception("Error optimizing %s: %s", market, e)
+
+            # 2. Stocks/ETFs/Bonds (from current portfolio)
+            positions = await db.execute(select(Position.symbol).where(Position.asset_type != AssetType.CRYPTO).distinct())
+            symbols = [row[0] for row in positions.all()]
+            
+            for symbol in symbols:
+                try:
+                    logger.info("Optimizing %s (Stock/ETF/Bond)", symbol)
+                    from_date = date.today() - timedelta(days=1000) # Get enough history
+                    prices = await fmp.get_historical_prices(symbol, from_date=from_date)
+                    if len(prices) < 100:
+                        continue
+                    df = pd.DataFrame(prices)
+                    df["date"] = pd.to_datetime(df["date"])
+                    df = df.sort_values("date").set_index("date")
+                    for col in ["open", "high", "low", "close", "volume"]:
+                        if col not in df.columns:
+                            df[col] = df.get("adjClose", df.get("close", 0))
+
+                    opt = optimize_parameters(df, symbol)
+                    if opt.improved:
+                        cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
+                        if not cfg:
+                            cfg = IndicatorConfig(symbol=symbol, indicator_name="all")
+                            db.add(cfg)
+                        cfg.parameters = json.dumps(opt.best_params)
+                        cfg.last_optimized_at = datetime.utcnow()
+                        cfg.oos_sharpe = opt.oos_sharpe
+                        cfg.oos_sortino = opt.oos_sortino
+                        cfg.oos_return = opt.oos_return
+                        
+                        results["optimizations"].append({"symbol": symbol, "improved": True, "oos_sharpe": opt.oos_sharpe})
+                except Exception as e:
+                    logger.exception("Error optimizing %s: %s", symbol, e)
+
+        except Exception as e:
+            logger.exception("Optimizer weekly job error: %s", e)
+            results["error"] = str(e)
+        finally:
+            await fmp.close()
+
+        await db.commit()
+
+    logger.info("═══ OPTIMIZER WEEKLY JOB END — %d improvements ═══", len(results["optimizations"]))
     return results

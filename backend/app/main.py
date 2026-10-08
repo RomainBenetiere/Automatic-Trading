@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.scheduler.jobs import run_crypto_daily_job, run_stocks_weekly_job
+from app.scheduler.jobs import run_crypto_daily_job, run_stocks_weekly_job, run_optimizer_weekly_job
 
 # Configure logging
 logging.basicConfig(
@@ -58,6 +58,19 @@ async def lifespan(app: FastAPI):
         ),
         id="stocks_weekly",
         name="Weekly Stocks/ETFs/Bonds Analysis",
+        replace_existing=True,
+    )
+
+    # Weekly Optimizer job (runs a few hours before stocks weekly to prepare parameters)
+    scheduler.add_job(
+        run_optimizer_weekly_job,
+        CronTrigger(
+            day_of_week=settings.stocks_schedule_day_of_week,
+            hour=max(0, settings.stocks_schedule_hour - 3),
+            minute=settings.stocks_schedule_minute,
+        ),
+        id="optimizer_weekly",
+        name="Weekly Parameter Optimization",
         replace_existing=True,
     )
 
@@ -136,7 +149,16 @@ async def trigger_stocks_job():
     return {"status": "completed", "result": result}
 
 
+@app.post("/api/jobs/optimizer/trigger", tags=["jobs"])
+async def trigger_optimizer_job():
+    """Manually trigger the optimizer job."""
+    logger.info("Manual trigger: optimizer weekly job")
+    result = await run_optimizer_weekly_job()
+    return {"status": "completed", "result": result}
+
+
 @app.get("/api/jobs/status", tags=["jobs"])
+
 async def get_jobs_status():
     """Get scheduler status and next run times."""
     scheduler: AsyncIOScheduler = app.state.scheduler
