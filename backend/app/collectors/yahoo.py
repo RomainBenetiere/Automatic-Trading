@@ -350,13 +350,13 @@ class YahooFinanceClient:
     async def get_stock_news(self, symbol: str, limit: int = 20) -> list[dict[str, Any]]:
         """Recent news normalised to FMP keys: title, text, url, site, publishedDate."""
         ticker = await self._ticker(symbol)
+        raw = []
         try:
-            raw = await self._run(lambda: ticker.news, timeout=15.0) or []
+            raw = await self._run(lambda: ticker.news, timeout=3.0) or []
         except Exception as e:  # noqa: BLE001
-            logger.warning("Yahoo: news failed for %s: %s", symbol, e)
-            return []
+            logger.debug("Yahoo: ticker.news failed for %s (%s), falling back to Google News", symbol, e)
 
-        news = []
+        news: list[dict[str, Any]] = []
         for item in raw[:limit]:
             c = item.get("content") if isinstance(item.get("content"), dict) else item
             ts = c.get("pubDate") or c.get("providerPublishTime")
@@ -371,8 +371,55 @@ class YahooFinanceClient:
                 "site": provider.get("displayName") if isinstance(provider, dict) else c.get("publisher"),
                 "publishedDate": ts,
             })
-        logger.info("Yahoo: fetched %d news articles for %s", len(news), symbol)
+
+        if not news:
+            news = await self._fetch_google_news(symbol, limit=limit)
+
+        logger.info("Market Data: fetched %d news articles for %s", len(news), symbol)
         return news
+
+    async def _fetch_google_news(self, symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Fallback news fetcher via Google News RSS feed (free, works for Euronext / global)."""
+        import xml.etree.ElementTree as ET
+        import httpx
+
+        info = await self._get_info(symbol)
+        query = info.get("shortName") or info.get("longName") or symbol
+        query_clean = re.sub(r"\b(SA|SE|PLC|NV|AG|Corp|Inc)\b", "", query, flags=re.IGNORECASE).strip()
+        if not query_clean:
+            query_clean = symbol
+
+        lang = getattr(settings, "synthesis_language", "fr").lower()
+        if lang == "fr":
+            url = f"https://news.google.com/rss/search?q={query_clean}&hl=fr&gl=FR&ceid=FR:fr"
+        else:
+            url = f"https://news.google.com/rss/search?q={query_clean}&hl=en&gl=US&ceid=US:en"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if resp.status_code != 200:
+                    return []
+                tree = ET.fromstring(resp.text)
+                items = tree.findall(".//item")
+                news = []
+                for it in items[:limit]:
+                    title = it.findtext("title") or ""
+                    link = it.findtext("link") or ""
+                    pub = it.findtext("pubDate") or ""
+                    source_el = it.find("source")
+                    source = source_el.text if source_el is not None else ""
+                    news.append({
+                        "title": title,
+                        "text": title,
+                        "url": link,
+                        "site": source,
+                        "publishedDate": pub,
+                    })
+                return news
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Google News RSS fetch failed for %s: %s", symbol, e)
+            return []
 
     # ── Lifecycle ───────────────────────────────────────────────────────
 

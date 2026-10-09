@@ -65,17 +65,22 @@ def _build_synthesis_prompt(
     account_type: str,
     technical_score: float,
     fundamental_score: float,
-    dividend_score: float,
+    dividend_score: float | None,
     composite_score: float,
     signal: str,
     details: dict | None = None,
 ) -> str:
     """Build the prompt for LLM narrative synthesis."""
+    div_text = (
+        f"{dividend_score}/100"
+        if dividend_score is not None
+        else "N/A (ETF capitalisant — réinvestissement automatique des dividendes)"
+    )
     return f"""Analyse pour {name} ({symbol}) — {asset_type} dans le compte {account_type}:
 
 - Score technique: {technical_score}/100
 - Score fondamental: {fundamental_score}/100
-- Score dividende: {dividend_score}/100
+- Score dividende: {div_text}
 - Score composite: {composite_score}/100
 - Signal: {signal.upper().replace('_', ' ')}
 
@@ -400,17 +405,32 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                     if payout_ratio is not None:
                         payout_ratio = float(payout_ratio) * 100
 
-                    div_score, div_breakdown = score_dividend(
-                        dividend_yield=div_yield,
-                        dividend_history=div_history,
-                        payout_ratio=payout_ratio,
-                        is_bond=asset_type == AssetType.BOND,
-                    )
+                    # Check if this asset is an accumulating ETF (or doesn't distribute dividends)
+                    is_accumulating = False
+                    if is_etf:
+                        name = holding.get("name", "")
+                        has_acc_keyword = bool(re.search(r"\b(acc|accumulat\w*|capitalis\w*)\b", name, re.IGNORECASE))
+                        no_dividends = (not div_history) and (div_yield is None or div_yield <= 0)
+                        if has_acc_keyword or no_dividends:
+                            is_accumulating = True
+                            logger.info("%s identified as an accumulating ETF — dividend score will be ignored", symbol)
+
+                    if is_accumulating:
+                        div_score = None
+                        div_breakdown = None
+                    else:
+                        div_score, div_breakdown = score_dividend(
+                            dividend_yield=div_yield,
+                            dividend_history=div_history,
+                            payout_ratio=payout_ratio,
+                            is_bond=asset_type == AssetType.BOND,
+                        )
 
                     # Composite
                     composite = compute_composite(
                         tech_score, fund_score, div_score,
                         asset_type=asset_type.value,
+                        is_accumulating=is_accumulating,
                     )
 
                     # Store score

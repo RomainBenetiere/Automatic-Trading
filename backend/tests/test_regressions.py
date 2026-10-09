@@ -186,3 +186,32 @@ def test_yahoo_client_maps_to_fmp_shapes():
     score, breakdown = score_fundamental(km, r, news)
     assert breakdown.pe_score == 80.0 and breakdown.debt_score == 75.0
     assert score > 60
+
+
+def test_accumulating_etf_ignores_dividend_score():
+    from app.analysis.composite import compute_composite
+
+    # Regular ETF with dividend score
+    res_regular = compute_composite(
+        technical_score=60.0,
+        fundamental_score=70.0,
+        dividend_score=20.0,
+        asset_type="etf",
+        is_accumulating=False,
+    )
+    # 0.35 * 60 + 0.30 * 70 + 0.35 * 20 = 21 + 21 + 7 = 49.0
+    assert res_regular.composite_score == 49.0
+    assert res_regular.weights["dividend"] == 0.35
+
+    # Accumulating ETF: dividend score is ignored, weights redistributed between tech and fund (35:30 -> 53.8% : 46.2%)
+    res_acc = compute_composite(
+        technical_score=60.0,
+        fundamental_score=70.0,
+        dividend_score=None,
+        asset_type="etf",
+        is_accumulating=True,
+    )
+    assert res_acc.weights["dividend"] == 0.0
+    # Expected: (35/65)*60 + (30/65)*70 = 32.31 + 32.31 = 64.6
+    assert abs(res_acc.composite_score - 64.6) < 0.2
+    assert res_acc.signal == "buy"  # was dragged down to hold/reduce without this fix
