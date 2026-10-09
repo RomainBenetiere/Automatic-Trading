@@ -13,6 +13,9 @@ alembic==1.15.2
 # HTTP client
 httpx==0.28.1
 
+# Market data (free, worldwide)
+yfinance==1.7.0
+
 # Data & analysis
 pandas==2.2.3
 numpy==2.2.5

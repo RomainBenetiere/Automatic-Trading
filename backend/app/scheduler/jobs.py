@@ -24,7 +24,7 @@ from app.analysis.technical import (
     score_technical,
 )
 from app.collectors.bitvavo import BitvavoClient
-from app.collectors.fmp import FMPClient
+from app.collectors.yahoo import get_market_data_client
 from app.collectors.ghostfolio import GhostfolioClient
 from app.config import settings
 from app.database import async_session
@@ -290,7 +290,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
     """Weekly stock/ETF/bond analysis and recommendation job.
 
     1. Sync positions from Ghostfolio
-    2. Fetch FMP data (prices, fundamentals, dividends, news)
+    2. Fetch market data — Yahoo Finance or FMP (prices, fundamentals, dividends, news)
     3. Compute all three scores per asset
     4. Generate composite scores
     5. Call LLM for narrative synthesis
@@ -300,7 +300,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
     results: dict[str, Any] = {"timestamp": datetime.utcnow().isoformat(), "recommendations": []}
 
     ghostfolio = GhostfolioClient()
-    fmp = FMPClient()
+    market_data = get_market_data_client()
     llm = get_llm_provider()
 
     system_prompt = (
@@ -335,7 +335,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
 
                     # Fetch price history
                     from_date = date.today() - timedelta(days=365)
-                    prices = await fmp.get_historical_prices(symbol, from_date=from_date)
+                    prices = await market_data.get_historical_prices(symbol, from_date=from_date)
 
                     if len(prices) < 20:
                         logger.warning("Not enough price data for %s (%d)", symbol, len(prices))
@@ -363,10 +363,10 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                     # Fundamental analysis
                     is_etf = asset_type == AssetType.ETF
                     is_crypto = False
-                    key_metrics = await fmp.get_key_metrics(symbol)
-                    ratios = await fmp.get_financial_ratios(symbol)
-                    news = await fmp.get_stock_news(symbol, limit=15)
-                    etf_info = await fmp.get_etf_info(symbol) if is_etf else None
+                    key_metrics = await market_data.get_key_metrics(symbol)
+                    ratios = await market_data.get_financial_ratios(symbol)
+                    news = await market_data.get_stock_news(symbol, limit=15)
+                    etf_info = await market_data.get_etf_info(symbol) if is_etf else None
 
                     fund_score, fund_breakdown = score_fundamental(
                         key_metrics=key_metrics,
@@ -378,7 +378,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                     )
 
                     # Dividend analysis
-                    div_history = await fmp.get_dividend_history(symbol)
+                    div_history = await market_data.get_dividend_history(symbol)
                     km0 = key_metrics[0] if key_metrics else {}
                     r0 = ratios[0] if ratios else {}
                     # Legacy v3 names first, then /stable names.
@@ -504,11 +504,11 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
             results["error"] = str(e)
         finally:
             await ghostfolio.close()
-            await fmp.close()
+            await market_data.close()
 
         await db.commit()
 
-    fmp.clear_cache()
+    market_data.clear_cache()
     logger.info(
         "═══ STOCKS WEEKLY JOB END — %d recommendations ═══",
         len(results["recommendations"]),
@@ -524,7 +524,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
     results: dict[str, Any] = {"timestamp": datetime.utcnow().isoformat(), "optimizations": []}
 
     bitvavo = BitvavoClient()
-    fmp = FMPClient()
+    market_data = get_market_data_client()
 
     async with async_session() as db:
         try:
@@ -561,7 +561,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                 try:
                     logger.info("Optimizing %s (Stock/ETF/Bond)", symbol)
                     from_date = date.today() - timedelta(days=1000) # Get enough history
-                    prices = await fmp.get_historical_prices(symbol, from_date=from_date)
+                    prices = await market_data.get_historical_prices(symbol, from_date=from_date)
                     if len(prices) < 100:
                         continue
                     df = pd.DataFrame(prices)
@@ -591,7 +591,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
             logger.exception("Optimizer weekly job error: %s", e)
             results["error"] = str(e)
         finally:
-            await fmp.close()
+            await market_data.close()
 
         await db.commit()
 

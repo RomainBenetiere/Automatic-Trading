@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.collectors.bitvavo import BitvavoClient
-from app.collectors.fmp import FMPClient
+from app.collectors.yahoo import get_market_data_client
 from app.collectors.ghostfolio import GhostfolioClient
 from app.config import settings
 
@@ -38,18 +38,19 @@ async def health_check() -> dict[str, Any]:
     except Exception as e:
         status["services"]["ghostfolio"] = {"status": "error", "error": str(e)}
 
-    # Check FMP
+    # Check market data provider (Yahoo Finance or FMP)
+    service_key = "fmp" if settings.market_data_provider.lower() == "fmp" else "yahoo_finance"
     try:
-        fmp = FMPClient()
-        fmp_ok = await fmp.health_check()
-        await fmp.close()
-        status["services"]["fmp"] = {
-            "status": "connected" if fmp_ok else "unreachable",
+        md = get_market_data_client()
+        md_ok = await md.health_check()
+        await md.close()
+        status["services"][service_key] = {
+            "status": "connected" if md_ok else "unreachable",
         }
-        if not fmp_ok and getattr(fmp, "last_error", None):
-            status["services"]["fmp"]["error"] = fmp.last_error
+        if not md_ok and getattr(md, "last_error", None):
+            status["services"][service_key]["error"] = md.last_error
     except Exception as e:
-        status["services"]["fmp"] = {"status": "error", "error": str(e)}
+        status["services"][service_key] = {"status": "error", "error": str(e)}
 
     # Check Bitvavo
     try:

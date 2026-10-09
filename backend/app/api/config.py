@@ -47,6 +47,7 @@ async def get_config() -> dict[str, Any]:
         "services": {
             "ghostfolio_url": settings.ghostfolio_url,
             "ghostfolio_configured": bool(settings.ghostfolio_token),
+            "market_data_provider": settings.market_data_provider,
             "fmp_configured": bool(settings.fmp_api_key),
             "bitvavo_configured": bool(settings.bitvavo_api_key),
             "llm_configured": bool(

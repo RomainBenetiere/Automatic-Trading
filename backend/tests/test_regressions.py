@@ -127,3 +127,62 @@ async def test_global_budget_counts_open_paper_lots(db):
     await db.flush()
     check = await PaperTrader(db).guardrails.check_global_budget(20.0)
     assert not check.passed  # 990 + 20 > 1000
+
+
+# ── Yahoo Finance collector maps to FMP-shaped payloads ─────────────────
+
+def test_yahoo_client_maps_to_fmp_shapes():
+    import asyncio
+    import types
+
+    import pandas as pd
+
+    from app.analysis.fundamental import score_fundamental
+    from app.collectors import yahoo
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+            self.info = {
+                "trailingPE": 12.0, "priceToBook": 1.5, "enterpriseToEbitda": 9.0,
+                "operatingMargins": 0.25, "debtToEquity": 40.0, "payoutRatio": 0.5,
+                "trailingAnnualDividendYield": 0.03, "currentPrice": 100.0,
+                "netExpenseRatio": 0.2, "totalAssets": 1e9,
+            }
+            cols = [pd.Timestamp("2025-12-31"), pd.Timestamp("2024-12-31")]
+            self.income_stmt = pd.DataFrame(
+                {cols[0]: [110.0, 1100.0], cols[1]: [100.0, 1000.0]},
+                index=["Net Income", "Total Revenue"],
+            )
+            self.dividends = pd.Series([1.0, 1.1], index=pd.to_datetime(["2024-06-01", "2025-06-01"]))
+            self.news = [{"content": {"title": "Record profit", "summary": "strong",
+                                      "pubDate": "2026-01-01T00:00:00Z",
+                                      "canonicalUrl": {"url": "http://x"},
+                                      "provider": {"displayName": "Reuters"}}}]
+
+    client = yahoo.YahooFinanceClient.__new__(yahoo.YahooFinanceClient)
+    client._yf = types.SimpleNamespace(Ticker=FakeTicker, Search=None)
+    client._symbol_map = yahoo._parse_symbol_map("CW8=CW8.PA")
+    client._resolved, client._tickers, client._info = {}, {}, {}
+    client._request_count, client.last_error = 0, None
+
+    async def run():
+        assert await client._resolve("CW8") == "CW8.PA"
+        km = await client.get_key_metrics("AI.PA")
+        r = await client.get_financial_ratios("AI.PA")
+        etf = await client.get_etf_info("CW8")
+        divs = await client.get_dividend_history("AI.PA")
+        news = await client.get_stock_news("AI.PA")
+        return km, r, etf, divs, news
+
+    km, r, etf, divs, news = asyncio.run(run())
+    assert km[0]["peRatio"] == 12.0 and km[0]["dividendYield"] == 0.03
+    assert abs(km[0]["netIncomePerShareGrowth"] - 0.10) < 1e-9
+    assert r[0]["debtEquityRatio"] == 0.40  # Yahoo % → ratio
+    assert abs(etf["expenseRatio"] - 0.002) < 1e-12  # 0.2 % → fraction
+    assert divs[0]["date"] == "2025-06-01" and divs[0]["dividend"] == 1.1  # newest first
+    assert news[0]["title"] == "Record profit" and news[0]["site"] == "Reuters"
+
+    score, breakdown = score_fundamental(km, r, news)
+    assert breakdown.pe_score == 80.0 and breakdown.debt_score == 75.0
+    assert score > 60

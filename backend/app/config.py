@@ -25,7 +25,14 @@ class Settings(BaseSettings):
     ghostfolio_url: str = "http://localhost:3333"
     ghostfolio_token: str = ""
 
-    # ── Financial Modeling Prep ──────────────────────────────────────────
+    # ── Market data provider ────────────────────────────────────────────
+    # "yahoo" (free, worldwide incl. Euronext) or "fmp" (Financial Modeling Prep)
+    market_data_provider: str = "yahoo"
+    # Optional remapping of portfolio symbols to Yahoo tickers, e.g.
+    # "CW8=CW8.PA,FR0010315770=CW8.PA" (ISINs are otherwise auto-resolved)
+    yahoo_symbol_map: str = ""
+
+    # ── Financial Modeling Prep (only used when MARKET_DATA_PROVIDER=fmp) ─
     fmp_api_key: str = ""
 
     # ── Bitvavo ─────────────────────────────────────────────────────────
