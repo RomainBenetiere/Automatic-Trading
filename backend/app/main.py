@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -146,6 +146,8 @@ async def trigger_stocks_job():
     """Manually trigger the weekly stocks analysis job."""
     logger.info("Manual trigger: stocks weekly job")
     result = await run_stocks_weekly_job()
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
     return {"status": "completed", "result": result}
 
 

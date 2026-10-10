@@ -306,7 +306,11 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
 
     ghostfolio = GhostfolioClient()
     market_data = get_market_data_client()
-    llm = get_llm_provider()
+    try:
+        llm = get_llm_provider()
+    except Exception as e:
+        logger.warning("Could not initialize LLM provider (%s), using fallback text", e)
+        llm = None
 
     system_prompt = (
         SYNTHESIS_SYSTEM_PROMPT_FR
@@ -314,20 +318,33 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
         else SYNTHESIS_SYSTEM_PROMPT_EN
     )
 
+    action_map = {
+        "strong_buy": ActionType.STRONG_BUY,
+        "buy": ActionType.BUY,
+        "hold": ActionType.HOLD,
+        "reduce": ActionType.REDUCE,
+        "sell": ActionType.SELL,
+    }
+
     async with async_session() as db:
         try:
             # 1. Sync positions from Ghostfolio
             holdings = await ghostfolio.get_holdings()
             logger.info("Fetched %d holdings from Ghostfolio", len(holdings))
 
-            # Store positions (replace any snapshot already taken today)
+            # Store positions (replace any snapshot and scores/recommendations already taken today)
             await db.execute(delete(Position).where(Position.snapshot_date == date.today()))
+            await db.execute(delete(Recommendation).where(Recommendation.date == date.today()))
+            await db.execute(delete(Score).where(Score.date == date.today()))
             for h in holdings:
                 position = Position(**h)
                 db.add(position)
 
             # Filter non-crypto positions
             non_crypto = [h for h in holdings if h["asset_type"] != AssetType.CRYPTO]
+
+            # Cache to avoid re-analyzing the same symbol across multiple accounts
+            computed_scores: dict[str, tuple[Score, CompositeResult, str]] = {}
 
             # 2-5. Process each asset
             for holding in non_crypto:
@@ -336,7 +353,33 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                 account_type = holding["account_type"]
 
                 try:
-                    logger.info("── Processing %s (%s) ──", symbol, asset_type.value)
+                    logger.info("── Processing %s (%s) in %s ──", symbol, asset_type.value, account_type.value)
+
+                    # If this symbol was already analyzed today in another account, reuse its score and narrative
+                    if symbol in computed_scores:
+                        score_record, composite, base_narrative = computed_scores[symbol]
+                        act = action_map.get(composite.signal, ActionType.HOLD)
+                        conf = composite.composite_score / 100.0
+
+                        rec = Recommendation(
+                            symbol=symbol,
+                            date=date.today(),
+                            account_type=account_type.value,
+                            action=act,
+                            confidence=round(conf, 3),
+                            narrative=base_narrative,
+                            score_id=score_record.id,
+                        )
+                        db.add(rec)
+                        results["recommendations"].append({
+                            "symbol": symbol,
+                            "name": holding["name"],
+                            "account_type": account_type.value,
+                            "signal": composite.signal,
+                            "composite_score": composite.composite_score,
+                            "action": act.value,
+                        })
+                        continue
 
                     # Fetch price history
                     from_date = date.today() - timedelta(days=365)
@@ -461,25 +504,21 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         details={
                             "technical_signals": tech_signals.signals,
                             "fundamental": fund_breakdown.details,
-                            "dividend": div_breakdown.details,
+                            "dividend": div_breakdown.details if div_breakdown else {},
                         },
                     )
 
-                    try:
-                        narrative = await llm.generate(prompt, system_prompt=system_prompt)
-                    except Exception as e:
-                        logger.error("LLM synthesis failed for %s: %s", symbol, e)
-                        narrative = f"[Synthesis unavailable: {e}]"
-
                     # Map signal to ActionType
-                    action_map = {
-                        "strong_buy": ActionType.STRONG_BUY,
-                        "buy": ActionType.BUY,
-                        "hold": ActionType.HOLD,
-                        "reduce": ActionType.REDUCE,
-                        "sell": ActionType.SELL,
-                    }
                     action_type = action_map.get(composite.signal, ActionType.HOLD)
+
+                    if llm:
+                        try:
+                            narrative = await llm.generate(prompt, system_prompt=system_prompt)
+                        except Exception as e:
+                            logger.error("LLM synthesis failed for %s: %s", symbol, e)
+                            narrative = f"[Synthèse indisponible: {e}]"
+                    else:
+                        narrative = f"Recommandation {action_type.value.upper()}: Score composite de {composite.composite_score:.1f}/100."
 
                     # Confidence from composite score (normalise to 0-1)
                     confidence = composite.composite_score / 100.0
@@ -495,6 +534,9 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         score_id=score_record.id,
                     )
                     db.add(recommendation)
+
+                    # Save to cache so other accounts holding this symbol reuse it
+                    computed_scores[symbol] = (score_record, composite, narrative)
 
                     results["recommendations"].append({
                         "symbol": symbol,
@@ -522,11 +564,12 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
         except Exception as e:
             logger.exception("Stocks weekly job error: %s", e)
             results["error"] = str(e)
+            await db.rollback()
+        else:
+            await db.commit()
         finally:
             await ghostfolio.close()
             await market_data.close()
-
-        await db.commit()
 
     market_data.clear_cache()
     logger.info(
