@@ -31,12 +31,29 @@ class OpenAIProvider(LLMProvider):
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.4,
-            )
+            kwargs: dict = {
+                "model": self.model,
+                "messages": messages,
+                "max_completion_tokens": max_tokens,
+            }
+            if not self.model.startswith(("o1", "o3")):
+                kwargs["temperature"] = 0.4
+
+            try:
+                response = await self._client.chat.completions.create(**kwargs)
+            except Exception as e:
+                err_str = str(e).lower()
+                # If model prefers legacy max_tokens
+                if "max_completion_tokens" in err_str:
+                    kwargs.pop("max_completion_tokens", None)
+                    kwargs["max_tokens"] = max_tokens
+                    response = await self._client.chat.completions.create(**kwargs)
+                # If model doesn't support temperature (like o1 / o3)
+                elif "temperature" in err_str:
+                    kwargs.pop("temperature", None)
+                    response = await self._client.chat.completions.create(**kwargs)
+                else:
+                    raise
 
             text = response.choices[0].message.content or ""
             logger.info("OpenAI: generated %d chars", len(text))
