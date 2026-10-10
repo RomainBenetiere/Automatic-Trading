@@ -1,12 +1,19 @@
-"""Runtime configuration API routes."""
-
-from __future__ import annotations
-
+import json
+from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import get_db
+from app.models.indicator_config import IndicatorConfig
+from app.analysis.technical import (
+    PARAMS_HIGH_VOLATILITY,
+    PARAMS_MEDIUM_VOLATILITY,
+    PARAMS_LOW_VOLATILITY,
+)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -57,5 +64,45 @@ async def get_config() -> dict[str, Any]:
                     "anthropic": settings.anthropic_api_key,
                 }.get(settings.llm_provider)
             ),
+        },
+    }
+
+
+@router.get("/indicators")
+async def get_indicator_configs(
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get optimized indicator parameters per symbol and default regime parameters."""
+    stmt = select(IndicatorConfig).order_by(IndicatorConfig.symbol)
+    result = await db.execute(stmt)
+    configs = result.scalars().all()
+
+    optimized = []
+    for c in configs:
+        params_dict = {}
+        if c.parameters:
+            try:
+                params_dict = json.loads(c.parameters)
+            except Exception:
+                params_dict = {}
+        optimized.append({
+            "id": c.id,
+            "symbol": c.symbol,
+            "indicator_name": c.indicator_name,
+            "parameters": params_dict,
+            "last_optimized_at": c.last_optimized_at.isoformat() if c.last_optimized_at else None,
+            "oos_sharpe": c.oos_sharpe,
+            "oos_sortino": c.oos_sortino,
+            "oos_return": c.oos_return,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        })
+
+    return {
+        "optimized": optimized,
+        "defaults": {
+            "high_volatility": asdict(PARAMS_HIGH_VOLATILITY),
+            "medium_volatility": asdict(PARAMS_MEDIUM_VOLATILITY),
+            "low_volatility": asdict(PARAMS_LOW_VOLATILITY),
         },
     }

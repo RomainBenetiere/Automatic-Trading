@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Bitcoin, Clock, Settings, Activity, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, Bitcoin, Clock, Settings, Activity, TrendingUp, Sliders } from 'lucide-react'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/crypto', label: 'Crypto Execution', icon: Bitcoin },
+  { path: '/optimizer', label: 'Paramètres Optimisés', icon: Sliders },
   { path: '/history', label: 'History', icon: Clock },
   { path: '/settings', label: 'Settings', icon: Settings },
 ]

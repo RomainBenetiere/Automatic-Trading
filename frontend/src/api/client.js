@@ -68,6 +68,7 @@ export const crypto = {
 // ── Config ─────────────────────────────────────────────────────
 export const config = {
   get: () => request('/config'),
+  getIndicators: () => request('/config/indicators'),
 }
 
 // ── Health ─────────────────────────────────────────────────────
