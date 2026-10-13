@@ -69,7 +69,7 @@ export default function History() {
                   <span className="reco-card-symbol">{r.symbol}</span>
                   <SignalBadge signal={r.action} />
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                    {r.account_type} • {(r.confidence * 100).toFixed(0)}% confidence
+                    {r.account_name ? `${r.account_name} (${r.account_type})` : r.account_type} • {(r.confidence * 100).toFixed(0)}% confidence
                   </span>
                 </div>
                 <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{r.date}</span>

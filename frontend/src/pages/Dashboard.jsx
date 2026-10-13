@@ -100,22 +100,49 @@ export default function Dashboard() {
     setTriggering(false)
   }
 
-  // Aggregate portfolio by account type
-  const accountSummary = {}
+  // Aggregate portfolio by individual placement (account_name || account_type)
+  const placementSummary = {}
+  let totalPortfolioValue = 0
+  let totalPositionsCount = 0
+
+  // Mapping of symbol -> list of accounts where it is held
+  const symbolPlacements = {}
+
   if (positions && Array.isArray(positions)) {
     for (const p of positions) {
-      const key = p.account_type
-      if (!accountSummary[key]) accountSummary[key] = { count: 0, value: 0 }
-      accountSummary[key].count++
-      accountSummary[key].value += p.market_value || 0
+      const placementName = p.account_name || p.account_type
+      if (!placementSummary[placementName]) {
+        placementSummary[placementName] = {
+          count: 0,
+          value: 0,
+          accountType: p.account_type,
+          name: placementName,
+        }
+      }
+      const val = p.market_value || 0
+      placementSummary[placementName].count++
+      placementSummary[placementName].value += val
+      totalPortfolioValue += val
+      totalPositionsCount++
+
+      if (!symbolPlacements[p.symbol]) {
+        symbolPlacements[p.symbol] = []
+      }
+      symbolPlacements[p.symbol].push({
+        placement: placementName,
+        accountType: p.account_type,
+        quantity: p.quantity,
+        value: val,
+      })
     }
   }
 
   const accountLabels = {
-    brokerage: 'Brokerage',
+    brokerage: 'CTO',
     pea: 'PEA',
     assurance_vie: 'Assurance Vie',
-    per: 'PER',
+    per: 'PER / PERO',
+    pee: 'PEE',
     crypto: 'Crypto',
   }
 
@@ -146,10 +173,42 @@ export default function Dashboard() {
 
       {/* Account Summary Cards */}
       <div className="summary-grid">
-        {Object.entries(accountSummary).map(([key, val], i) => (
-          <div key={key} className={`card animate-in animate-in-delay-${i + 1}`}>
+        {Object.keys(placementSummary).length > 0 && (
+          <div className="card animate-in" style={{ borderColor: 'rgba(6, 182, 212, 0.4)' }}>
             <div className="card-header">
-              <span className="card-title">{accountLabels[key] || key}</span>
+              <span className="card-title">Total Portefeuille</span>
+              <PieChart size={18} style={{ color: 'var(--accent-primary)' }} />
+            </div>
+            <div className="card-value">
+              {totalPortfolioValue.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })}
+            </div>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+              {totalPositionsCount} position{totalPositionsCount > 1 ? 's' : ''} • {Object.keys(placementSummary).length} placement{Object.keys(placementSummary).length > 1 ? 's' : ''}
+            </div>
+          </div>
+        )}
+
+        {Object.entries(placementSummary).map(([key, val], i) => (
+          <div key={key} className={`card animate-in animate-in-delay-${(i % 5) + 1}`}>
+            <div className="card-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="card-title">{val.name}</span>
+                {val.accountType && (
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      padding: '1px 6px',
+                      borderRadius: '4px',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      color: 'var(--accent-secondary)',
+                      textTransform: 'uppercase',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {accountLabels[val.accountType] || val.accountType}
+                  </span>
+                )}
+              </div>
               <Wallet size={18} style={{ color: 'var(--accent-primary)', opacity: 0.7 }} />
             </div>
             <div className="card-value">
@@ -161,7 +220,7 @@ export default function Dashboard() {
           </div>
         ))}
 
-        {Object.keys(accountSummary).length === 0 && !posLoading && (
+        {Object.keys(placementSummary).length === 0 && !posLoading && (
           <div className="card animate-in">
             <div className="card-header">
               <span className="card-title">Total Portfolio</span>
@@ -185,7 +244,7 @@ export default function Dashboard() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Symbol</th>
+                <th>Symbol / Placements</th>
                 <th>Technical</th>
                 <th>Fundamental</th>
                 <th>Dividend</th>
@@ -198,7 +257,29 @@ export default function Dashboard() {
               {latestScores && latestScores.length > 0 ? (
                 latestScores.map((s) => (
                   <tr key={s.symbol}>
-                    <td style={{ fontWeight: 600 }}>{s.symbol}</td>
+                    <td style={{ fontWeight: 600 }}>
+                      <div>{s.symbol}</div>
+                      {symbolPlacements[s.symbol] && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                          {symbolPlacements[s.symbol].map((sp, idx) => (
+                            <span
+                              key={idx}
+                              style={{
+                                fontSize: '0.68rem',
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: 'rgba(255, 255, 255, 0.06)',
+                                color: 'var(--text-muted)',
+                                border: '1px solid var(--border-subtle)',
+                              }}
+                              title={`${sp.quantity} parts (${(sp.value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })})`}
+                            >
+                              {sp.placement}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td><ScoreGauge value={s.technical_score} size={36} /></td>
                     <td><ScoreGauge value={s.fundamental_score} size={36} /></td>
                     <td><ScoreGauge value={s.dividend_score} size={36} /></td>
@@ -237,7 +318,7 @@ export default function Dashboard() {
                   <span className="reco-card-symbol">{r.symbol}</span>
                   <SignalBadge signal={r.action} />
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                    {r.account_type} • confidence: {(r.confidence * 100).toFixed(0)}%
+                    {r.account_name ? `${r.account_name} (${accountLabels[r.account_type] || r.account_type})` : (accountLabels[r.account_type] || r.account_type)} • confidence: {(r.confidence * 100).toFixed(0)}%
                   </span>
                 </div>
                 <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{r.date}</span>

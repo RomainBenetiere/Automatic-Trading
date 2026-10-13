@@ -19,10 +19,11 @@ router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 @router.get("/positions")
 async def get_positions(
     account_type: str | None = None,
+    account_name: str | None = None,
     asset_type: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    """Get current positions, optionally filtered by account/asset type."""
+    """Get current positions, optionally filtered by account/asset type or account name."""
     # Get the latest snapshot date
     latest_date_stmt = select(Position.snapshot_date).order_by(
         desc(Position.snapshot_date)
@@ -36,6 +37,8 @@ async def get_positions(
     stmt = select(Position).where(Position.snapshot_date == latest_date)
     if account_type:
         stmt = stmt.where(Position.account_type == account_type)
+    if account_name:
+        stmt = stmt.where(Position.account_name == account_name)
     if asset_type:
         stmt = stmt.where(Position.asset_type == asset_type)
 
@@ -50,6 +53,7 @@ async def get_positions(
             "name": p.name,
             "asset_type": p.asset_type.value,
             "account_type": p.account_type.value,
+            "account_name": p.account_name,
             "quantity": p.quantity,
             "avg_cost": p.avg_cost,
             "current_price": p.current_price,
@@ -86,6 +90,7 @@ async def get_position_detail(
         "name": position.name,
         "asset_type": position.asset_type.value,
         "account_type": position.account_type.value,
+        "account_name": position.account_name,
         "quantity": position.quantity,
         "avg_cost": position.avg_cost,
         "current_price": position.current_price,

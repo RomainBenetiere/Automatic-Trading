@@ -23,6 +23,7 @@ class AccountType(str, enum.Enum):
     PEA = "pea"
     ASSURANCE_VIE = "assurance_vie"
     PER = "per"
+    PEE = "pee"
     CRYPTO = "crypto"
 
 
@@ -34,6 +35,7 @@ class Position(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     asset_type: Mapped[AssetType] = mapped_column(Enum(AssetType), nullable=False)
     account_type: Mapped[AccountType] = mapped_column(Enum(AccountType), nullable=False)
+    account_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     avg_cost: Mapped[float] = mapped_column(Float, nullable=True)
     current_price: Mapped[float] = mapped_column(Float, nullable=True)
@@ -46,7 +48,7 @@ class Position(Base):
     def __repr__(self) -> str:
         return (
             f"<Position {self.symbol} qty={self.quantity} "
-            f"account={self.account_type.value} @ {self.snapshot_date}>"
+            f"account={self.account_type.value} ({self.account_name}) @ {self.snapshot_date}>"
         )
 
     @property

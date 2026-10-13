@@ -23,7 +23,30 @@ ACCOUNT_TYPE_MAP: dict[str, AccountType] = {
     "assurance_vie": AccountType.ASSURANCE_VIE,
     "av": AccountType.ASSURANCE_VIE,
     "per": AccountType.PER,
+    "pee": AccountType.PEE,
 }
+
+
+def resolve_account_type(name: str | None) -> AccountType:
+    """Resolve AccountType from account name string using pattern matching."""
+    if not name:
+        return AccountType.BROKERAGE
+    lower = str(name).strip().lower()
+
+    if "pee" in lower or "epargne entreprise" in lower or "épargne entreprise" in lower:
+        return AccountType.PEE
+    if "per" in lower or "pero" in lower or "percol" in lower or "retraite" in lower:
+        return AccountType.PER
+    if "pea" in lower:
+        return AccountType.PEA
+    if "assurance" in lower or "assurance_vie" in lower or "av" in lower.split():
+        return AccountType.ASSURANCE_VIE
+    if "crypto" in lower:
+        return AccountType.CRYPTO
+    if any(k in lower for k in ("cto", "brokerage", "compte-titres", "compte titres")):
+        return AccountType.BROKERAGE
+
+    return ACCOUNT_TYPE_MAP.get(lower, AccountType.BROKERAGE)
 
 ASSET_TYPE_MAP: dict[str, AssetType] = {
     "EQUITY": AssetType.STOCK,
@@ -96,9 +119,7 @@ class GhostfolioClient:
         for account in accounts:
             account_id = account.get("id")
             account_name = account.get("name", "brokerage")
-            account_type = ACCOUNT_TYPE_MAP.get(
-                str(account_name).lower(), AccountType.BROKERAGE
-            )
+            account_type = resolve_account_type(account_name)
 
             params = {"accounts": account_id} if account_id else None
             data = await self._get("/api/v1/portfolio/holdings", params=params)
@@ -128,6 +149,7 @@ class GhostfolioClient:
                         "name": item.get("name", symbol),
                         "asset_type": asset_type,
                         "account_type": account_type,
+                        "account_name": str(account_name).strip() if account_name else "",
                         "quantity": float(item.get("quantity") or 0),
                         "avg_cost": item.get("averagePrice"),
                         "current_price": item.get("marketPrice"),

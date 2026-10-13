@@ -215,3 +215,67 @@ def test_accumulating_etf_ignores_dividend_score():
     # Expected: (35/65)*60 + (30/65)*70 = 32.31 + 32.31 = 64.6
     assert abs(res_acc.composite_score - 64.6) < 0.2
     assert res_acc.signal == "buy"  # was dragged down to hold/reduce without this fix
+
+
+def test_resolve_account_type_pattern_matching():
+    from app.collectors.ghostfolio import resolve_account_type
+    from app.models.position import AccountType
+
+    assert resolve_account_type("PEE BNP") == AccountType.PEE
+    assert resolve_account_type("Plan d'Epargne Entreprise") == AccountType.PEE
+    assert resolve_account_type("PER FORTUNEO") == AccountType.PER
+    assert resolve_account_type("PER LINXEA") == AccountType.PER
+    assert resolve_account_type("PERO BNP") == AccountType.PER
+    assert resolve_account_type("PEA BOURSORAMA") == AccountType.PEA
+    assert resolve_account_type("Assurance Vie Linxea") == AccountType.ASSURANCE_VIE
+    assert resolve_account_type("AV Spirica") == AccountType.ASSURANCE_VIE
+    assert resolve_account_type("Bitvavo Crypto") == AccountType.CRYPTO
+    assert resolve_account_type("Compte Titres Ordinaire") == AccountType.BROKERAGE
+    assert resolve_account_type("CTO Degiro") == AccountType.BROKERAGE
+    assert resolve_account_type("Unknown Broker") == AccountType.BROKERAGE
+
+
+@pytest.mark.asyncio
+async def test_ghostfolio_holdings_includes_account_name(monkeypatch):
+    from app.collectors.ghostfolio import GhostfolioClient
+    from app.models.position import AccountType
+
+    payload = {
+        "holdings": [
+            {"symbol": "CW8", "assetClass": "EQUITY", "assetSubClass": "ETF", "quantity": 10},
+        ]
+    }
+    client = GhostfolioClient(base_url="http://x", security_token="t")
+
+    async def fake_get(path, params=None):
+        if path == "/api/v1/account":
+            return {"accounts": [{"id": "acc-1", "name": "PEE BNP"}]}
+        return payload
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    holdings = await client.get_holdings()
+    await client.close()
+
+    assert len(holdings) == 1
+    assert holdings[0]["symbol"] == "CW8"
+    assert holdings[0]["account_type"] == AccountType.PEE
+    assert holdings[0]["account_name"] == "PEE BNP"
+
+
+@pytest.mark.asyncio
+async def test_init_db_auto_migration():
+    from app.database import init_db, engine
+    from sqlalchemy import text
+
+    await init_db()
+
+    async with engine.connect() as conn:
+        res = await conn.execute(text("PRAGMA table_info(positions)"))
+        cols = [r[1] for r in res.fetchall()]
+        assert "account_name" in cols
+
+        res = await conn.execute(text("PRAGMA table_info(recommendations)"))
+        cols = [r[1] for r in res.fetchall()]
+        assert "account_name" in cols
+
+

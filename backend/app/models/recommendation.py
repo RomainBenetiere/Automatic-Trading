@@ -25,7 +25,8 @@ class Recommendation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    account_type: Mapped[str] = mapped_column(String(32), nullable=False)  # brokerage / pea / assurance_vie / per
+    account_type: Mapped[str] = mapped_column(String(32), nullable=False)  # brokerage / pea / assurance_vie / per / pee
+    account_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     action: Mapped[ActionType] = mapped_column(Enum(ActionType), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
@@ -44,5 +45,6 @@ class Recommendation(Base):
     def __repr__(self) -> str:
         return (
             f"<Recommendation {self.symbol} {self.action.value} "
+            f"account={self.account_name or self.account_type} "
             f"confidence={self.confidence:.0%} @ {self.date}>"
         )

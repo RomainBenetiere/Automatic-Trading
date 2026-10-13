@@ -98,14 +98,19 @@ async def get_score_history(
 @router.get("/recommendations/latest")
 async def get_latest_recommendations(
     account_type: str | None = None,
+    account_name: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """Get the most recent recommendations."""
     from sqlalchemy import func
 
     subq = (
-        select(Recommendation.symbol, func.max(Recommendation.date).label("max_date"))
-        .group_by(Recommendation.symbol)
+        select(
+            Recommendation.symbol,
+            Recommendation.account_name,
+            func.max(Recommendation.date).label("max_date"),
+        )
+        .group_by(Recommendation.symbol, Recommendation.account_name)
         .subquery()
     )
 
@@ -115,6 +120,7 @@ async def get_latest_recommendations(
             subq,
             and_(
                 Recommendation.symbol == subq.c.symbol,
+                Recommendation.account_name == subq.c.account_name,
                 Recommendation.date == subq.c.max_date,
             ),
         )
@@ -122,6 +128,8 @@ async def get_latest_recommendations(
 
     if account_type:
         stmt = stmt.where(Recommendation.account_type == account_type)
+    if account_name:
+        stmt = stmt.where(Recommendation.account_name == account_name)
 
     stmt = stmt.order_by(desc(Recommendation.confidence))
 
@@ -134,6 +142,7 @@ async def get_latest_recommendations(
             "symbol": r.symbol,
             "date": r.date.isoformat(),
             "account_type": r.account_type,
+            "account_name": r.account_name,
             "action": r.action.value,
             "confidence": r.confidence,
             "narrative": r.narrative,
@@ -146,6 +155,7 @@ async def get_latest_recommendations(
 @router.get("/recommendations/history")
 async def get_recommendation_history(
     symbol: str | None = None,
+    account_name: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
@@ -154,6 +164,8 @@ async def get_recommendation_history(
 
     if symbol:
         stmt = stmt.where(Recommendation.symbol == symbol)
+    if account_name:
+        stmt = stmt.where(Recommendation.account_name == account_name)
 
     stmt = stmt.limit(limit)
 
@@ -166,6 +178,7 @@ async def get_recommendation_history(
             "symbol": r.symbol,
             "date": r.date.isoformat(),
             "account_type": r.account_type,
+            "account_name": r.account_name,
             "action": r.action.value,
             "confidence": r.confidence,
             "narrative": r.narrative,

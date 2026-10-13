@@ -63,11 +63,12 @@ def _build_synthesis_prompt(
     name: str,
     asset_type: str,
     account_type: str,
-    technical_score: float,
-    fundamental_score: float,
-    dividend_score: float | None,
-    composite_score: float,
-    signal: str,
+    account_name: str = "",
+    technical_score: float = 0.0,
+    fundamental_score: float = 0.0,
+    dividend_score: float | None = None,
+    composite_score: float = 0.0,
+    signal: str = "",
     details: dict | None = None,
 ) -> str:
     """Build the prompt for LLM narrative synthesis."""
@@ -76,7 +77,8 @@ def _build_synthesis_prompt(
         if dividend_score is not None
         else "N/A (ETF capitalisant — réinvestissement automatique des dividendes)"
     )
-    return f"""Analyse pour {name} ({symbol}) — {asset_type} dans le compte {account_type}:
+    acc_label = f"{account_name} ({account_type})" if account_name else account_type
+    return f"""Analyse pour {name} ({symbol}) — {asset_type} dans le placement {acc_label}:
 
 - Score technique: {technical_score}/100
 - Score fondamental: {fundamental_score}/100
@@ -351,9 +353,10 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                 symbol = holding["symbol"]
                 asset_type = holding["asset_type"]
                 account_type = holding["account_type"]
+                account_name = holding.get("account_name", "")
 
                 try:
-                    logger.info("── Processing %s (%s) in %s ──", symbol, asset_type.value, account_type.value)
+                    logger.info("── Processing %s (%s) in %s (%s) ──", symbol, asset_type.value, account_name, account_type.value)
 
                     # If this symbol was already analyzed today in another account, reuse its score and narrative
                     if symbol in computed_scores:
@@ -365,6 +368,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                             symbol=symbol,
                             date=date.today(),
                             account_type=account_type.value,
+                            account_name=account_name,
                             action=act,
                             confidence=round(conf, 3),
                             narrative=base_narrative,
@@ -375,6 +379,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                             "symbol": symbol,
                             "name": holding["name"],
                             "account_type": account_type.value,
+                            "account_name": account_name,
                             "signal": composite.signal,
                             "composite_score": composite.composite_score,
                             "action": act.value,
@@ -496,6 +501,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         name=holding["name"],
                         asset_type=asset_type.value,
                         account_type=account_type.value,
+                        account_name=account_name,
                         technical_score=tech_score,
                         fundamental_score=fund_score,
                         dividend_score=div_score,
@@ -528,6 +534,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         symbol=symbol,
                         date=date.today(),
                         account_type=account_type.value,
+                        account_name=account_name,
                         action=action_type,
                         confidence=round(confidence, 3),
                         narrative=narrative,
@@ -542,6 +549,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         "symbol": symbol,
                         "name": holding["name"],
                         "account_type": account_type.value,
+                        "account_name": account_name,
                         "signal": composite.signal,
                         "composite_score": composite.composite_score,
                         "action": action_type.value,
