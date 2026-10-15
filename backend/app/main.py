@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -147,40 +147,38 @@ app.include_router(crypto_router)
 app.include_router(config_router)
 
 
-# ── Manual trigger endpoints ────────────────────────────────────────────
+# ── Manual trigger endpoints (run in background) ───────────────────────
 
 @app.post("/api/jobs/crypto/trigger", tags=["jobs"])
-async def trigger_crypto_job():
-    """Manually trigger the 4H crypto analysis job."""
-    logger.info("Manual trigger: crypto 4H strategy job")
-    result = await run_crypto_daily_job()
-    return {"status": "completed", "result": result}
+async def trigger_crypto_job(background_tasks: BackgroundTasks):
+    """Manually trigger the 4H crypto analysis job in the background."""
+    logger.info("Manual trigger: crypto 4H strategy job requested")
+    background_tasks.add_task(run_crypto_daily_job)
+    return {"status": "started", "message": "Analyse crypto 4H lancée en tâche de fond"}
 
 
 @app.post("/api/jobs/crypto-stops/trigger", tags=["jobs"])
-async def trigger_crypto_stops_job():
-    """Manually trigger the 15-minute crypto stop-loss / trailing-stop check."""
-    logger.info("Manual trigger: crypto stops check job")
-    result = await run_crypto_stops_check_job()
-    return {"status": "completed", "result": result}
+async def trigger_crypto_stops_job(background_tasks: BackgroundTasks):
+    """Manually trigger the 15-minute crypto stop-loss / trailing-stop check in the background."""
+    logger.info("Manual trigger: crypto stops check job requested")
+    background_tasks.add_task(run_crypto_stops_check_job)
+    return {"status": "started", "message": "Vérification des stop-loss lancée en tâche de fond"}
 
 
 @app.post("/api/jobs/stocks/trigger", tags=["jobs"])
-async def trigger_stocks_job():
-    """Manually trigger the weekly stocks analysis job."""
-    logger.info("Manual trigger: stocks weekly job")
-    result = await run_stocks_weekly_job()
-    if result.get("error"):
-        raise HTTPException(status_code=500, detail=result["error"])
-    return {"status": "completed", "result": result}
+async def trigger_stocks_job(background_tasks: BackgroundTasks):
+    """Manually trigger the weekly stocks analysis job in the background."""
+    logger.info("Manual trigger: stocks weekly job requested")
+    background_tasks.add_task(run_stocks_weekly_job)
+    return {"status": "started", "message": "Analyse hebdomadaire des actions/ETF lancée en tâche de fond"}
 
 
 @app.post("/api/jobs/optimizer/trigger", tags=["jobs"])
-async def trigger_optimizer_job():
-    """Manually trigger the optimizer job."""
-    logger.info("Manual trigger: optimizer weekly job")
-    result = await run_optimizer_weekly_job()
-    return {"status": "completed", "result": result}
+async def trigger_optimizer_job(background_tasks: BackgroundTasks):
+    """Manually trigger the optimizer job in the background."""
+    logger.info("Manual trigger: optimizer weekly job requested")
+    background_tasks.add_task(run_optimizer_weekly_job)
+    return {"status": "started", "message": "L'optimiseur hebdomadaire a été lancé avec succès en tâche de fond."}
 
 
 @app.get("/api/jobs/status", tags=["jobs"])
