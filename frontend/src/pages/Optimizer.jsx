@@ -44,7 +44,7 @@ export default function Optimizer() {
     if (!searchQuery.trim()) return optimizedList
     const q = searchQuery.toLowerCase().trim()
     return optimizedList.filter((item) =>
-      item.symbol.toLowerCase().includes(q)
+      item.symbol.toLowerCase().includes(q) || (item.name && item.name.toLowerCase().includes(q))
     )
   }, [optimizedList, searchQuery])
 
@@ -285,17 +285,39 @@ export default function Optimizer() {
                     return (
                       <tr key={item.id || item.symbol}>
                         <td style={{ fontWeight: 600 }}>
-                          <span
-                            style={{
-                              background: 'var(--accent-primary-dim)',
-                              color: 'var(--accent-primary)',
-                              padding: '4px 8px',
-                              borderRadius: 'var(--radius-sm)',
-                              fontFamily: 'monospace',
-                            }}
-                          >
-                            {item.symbol}
-                          </span>
+                          <div style={{ color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.3 }}>
+                            {item.name && item.name !== item.symbol ? item.name : item.symbol}
+                          </div>
+                          {item.name && item.name !== item.symbol ? (
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                marginTop: 4,
+                                background: 'var(--accent-primary-dim)',
+                                color: 'var(--accent-primary)',
+                                padding: '2px 6px',
+                                borderRadius: 'var(--radius-sm)',
+                                fontFamily: 'monospace',
+                                fontSize: '0.72rem',
+                              }}
+                            >
+                              {item.symbol}
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                background: 'var(--accent-primary-dim)',
+                                color: 'var(--accent-primary)',
+                                padding: '2px 6px',
+                                borderRadius: 'var(--radius-sm)',
+                                fontFamily: 'monospace',
+                                fontSize: '0.75rem',
+                              }}
+                            >
+                              {item.symbol}
+                            </span>
+                          )}
                         </td>
                         <td>
                           {p.ema_fast != null && p.ema_slow != null ? (

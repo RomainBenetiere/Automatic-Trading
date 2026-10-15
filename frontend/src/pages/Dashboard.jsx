@@ -107,9 +107,14 @@ export default function Dashboard() {
 
   // Mapping of symbol -> list of accounts where it is held
   const symbolPlacements = {}
+  // Mapping of symbol -> readable asset name
+  const symbolNames = {}
 
   if (positions && Array.isArray(positions)) {
     for (const p of positions) {
+      if (p.name && !symbolNames[p.symbol]) {
+        symbolNames[p.symbol] = p.name
+      }
       const placementName = p.account_name || p.account_type
       if (!placementSummary[placementName]) {
         placementSummary[placementName] = {
@@ -244,7 +249,7 @@ export default function Dashboard() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Symbol / Placements</th>
+                <th>Actif / Placements</th>
                 <th>Technical</th>
                 <th>Fundamental</th>
                 <th>Dividend</th>
@@ -258,27 +263,36 @@ export default function Dashboard() {
                 latestScores.map((s) => (
                   <tr key={s.symbol}>
                     <td style={{ fontWeight: 600 }}>
-                      <div>{s.symbol}</div>
-                      {symbolPlacements[s.symbol] && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                          {symbolPlacements[s.symbol].map((sp, idx) => (
-                            <span
-                              key={idx}
-                              style={{
-                                fontSize: '0.68rem',
-                                padding: '1px 5px',
-                                borderRadius: '3px',
-                                background: 'rgba(255, 255, 255, 0.06)',
-                                color: 'var(--text-muted)',
-                                border: '1px solid var(--border-subtle)',
-                              }}
-                              title={`${sp.quantity} parts (${(sp.value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })})`}
-                            >
-                              {sp.placement}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <div style={{ color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.3 }}>
+                        {symbolNames[s.symbol] || s.name || s.symbol}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                        {(symbolNames[s.symbol] || s.name) && (symbolNames[s.symbol] || s.name) !== s.symbol && (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', fontFamily: 'monospace' }}>
+                            {s.symbol}
+                          </span>
+                        )}
+                        {symbolPlacements[s.symbol] && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {symbolPlacements[s.symbol].map((sp, idx) => (
+                              <span
+                                key={idx}
+                                style={{
+                                  fontSize: '0.68rem',
+                                  padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  background: 'rgba(255, 255, 255, 0.06)',
+                                  color: 'var(--accent-secondary)',
+                                  border: '1px solid var(--border-subtle)',
+                                }}
+                                title={`${sp.quantity} parts (${(sp.value || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })})`}
+                              >
+                                {sp.placement}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td><ScoreGauge value={s.technical_score} size={36} /></td>
                     <td><ScoreGauge value={s.fundamental_score} size={36} /></td>
@@ -314,8 +328,17 @@ export default function Dashboard() {
           latestRecos.map((r) => (
             <div key={r.id} className="reco-card animate-in">
               <div className="reco-card-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span className="reco-card-symbol">{r.symbol}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <span className="reco-card-symbol">
+                      {symbolNames[r.symbol] || r.name || r.symbol}
+                    </span>
+                    {(symbolNames[r.symbol] || r.name) && (symbolNames[r.symbol] || r.name) !== r.symbol && (
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: 6, fontFamily: 'monospace' }}>
+                        ({r.symbol})
+                      </span>
+                    )}
+                  </div>
                   <SignalBadge signal={r.action} />
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
                     {r.account_name ? `${r.account_name} (${accountLabels[r.account_type] || r.account_type})` : (accountLabels[r.account_type] || r.account_type)} • confidence: {(r.confidence * 100).toFixed(0)}%

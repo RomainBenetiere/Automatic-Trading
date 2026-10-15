@@ -22,8 +22,12 @@ export default function History() {
     120000
   )
 
-  // Get unique symbols from scores for filter
-  const symbols = latestScores ? [...new Set(latestScores.map(s => s.symbol))].sort() : []
+  // Get unique symbols from scores for filter with readable names
+  const symbolOptions = latestScores
+    ? Array.from(new Map(latestScores.map(s => [s.symbol, s.name || s.symbol])).entries())
+        .map(([sym, name]) => ({ symbol: sym, name }))
+        .sort((a, b) => (a.name || a.symbol).localeCompare(b.name || b.symbol))
+    : []
 
   return (
     <div>
@@ -49,8 +53,12 @@ export default function History() {
             cursor: 'pointer',
           }}
         >
-          <option value="">All symbols</option>
-          {symbols.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="">Tous les actifs</option>
+          {symbolOptions.map(s => (
+            <option key={s.symbol} value={s.symbol}>
+              {s.name && s.name !== s.symbol ? `${s.name} (${s.symbol})` : s.symbol}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -65,8 +73,17 @@ export default function History() {
           recoHistory.map((r) => (
             <div key={r.id} className="reco-card animate-in">
               <div className="reco-card-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span className="reco-card-symbol">{r.symbol}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <span className="reco-card-symbol">
+                      {r.name || r.symbol}
+                    </span>
+                    {r.name && r.name !== r.symbol && (
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: 6, fontFamily: 'monospace' }}>
+                        ({r.symbol})
+                      </span>
+                    )}
+                  </div>
                   <SignalBadge signal={r.action} />
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
                     {r.account_name ? `${r.account_name} (${r.account_type})` : r.account_type} • {(r.confidence * 100).toFixed(0)}% confidence

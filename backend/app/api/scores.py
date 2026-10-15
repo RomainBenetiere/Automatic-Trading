@@ -12,8 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.score import Score
 from app.models.recommendation import Recommendation
+from app.models.position import Position
 
 router = APIRouter(prefix="/api", tags=["scores"])
+
+
+async def _get_symbol_names(db: AsyncSession) -> dict[str, str]:
+    """Fetch symbol-to-name mapping from positions."""
+    stmt = select(Position.symbol, Position.name).where(Position.name != "").distinct()
+    res = await db.execute(stmt)
+    return {row[0]: row[1] for row in res.fetchall()}
 
 
 # ── Scores ──────────────────────────────────────────────────────────────
@@ -43,10 +51,12 @@ async def get_latest_scores(
 
     result = await db.execute(stmt)
     scores = result.scalars().all()
+    names_map = await _get_symbol_names(db)
 
     return [
         {
             "symbol": s.symbol,
+            "name": names_map.get(s.symbol, s.symbol),
             "date": s.date.isoformat(),
             "technical_score": s.technical_score,
             "fundamental_score": s.fundamental_score,
@@ -79,9 +89,12 @@ async def get_score_history(
 
     result = await db.execute(stmt)
     scores = result.scalars().all()
+    names_map = await _get_symbol_names(db)
 
     return [
         {
+            "symbol": s.symbol,
+            "name": names_map.get(s.symbol, s.symbol),
             "date": s.date.isoformat(),
             "technical_score": s.technical_score,
             "fundamental_score": s.fundamental_score,
@@ -135,11 +148,13 @@ async def get_latest_recommendations(
 
     result = await db.execute(stmt)
     recommendations = result.scalars().all()
+    names_map = await _get_symbol_names(db)
 
     return [
         {
             "id": r.id,
             "symbol": r.symbol,
+            "name": names_map.get(r.symbol, r.symbol),
             "date": r.date.isoformat(),
             "account_type": r.account_type,
             "account_name": r.account_name,
@@ -171,11 +186,13 @@ async def get_recommendation_history(
 
     result = await db.execute(stmt)
     recommendations = result.scalars().all()
+    names_map = await _get_symbol_names(db)
 
     return [
         {
             "id": r.id,
             "symbol": r.symbol,
+            "name": names_map.get(r.symbol, r.symbol),
             "date": r.date.isoformat(),
             "account_type": r.account_type,
             "account_name": r.account_name,

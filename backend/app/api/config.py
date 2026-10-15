@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.indicator_config import IndicatorConfig
+from app.models.position import Position
 from app.analysis.technical import (
     PARAMS_HIGH_VOLATILITY,
     PARAMS_MEDIUM_VOLATILITY,
@@ -77,6 +78,10 @@ async def get_indicator_configs(
     result = await db.execute(stmt)
     configs = result.scalars().all()
 
+    pos_stmt = select(Position.symbol, Position.name).where(Position.name != "").distinct()
+    pos_res = await db.execute(pos_stmt)
+    names_map = {row[0]: row[1] for row in pos_res.fetchall()}
+
     optimized = []
     for c in configs:
         params_dict = {}
@@ -88,6 +93,7 @@ async def get_indicator_configs(
         optimized.append({
             "id": c.id,
             "symbol": c.symbol,
+            "name": names_map.get(c.symbol, c.symbol),
             "indicator_name": c.indicator_name,
             "parameters": params_dict,
             "last_optimized_at": c.last_optimized_at.isoformat() if c.last_optimized_at else None,
