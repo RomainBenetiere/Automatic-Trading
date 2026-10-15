@@ -79,6 +79,7 @@ export const health = {
 // ── Jobs ───────────────────────────────────────────────────────
 export const jobs = {
   triggerCrypto: () => request('/jobs/crypto/trigger', { method: 'POST' }),
+  triggerCryptoStops: () => request('/jobs/crypto-stops/trigger', { method: 'POST' }),
   triggerStocks: () => request('/jobs/stocks/trigger', { method: 'POST' }),
   triggerOptimizer: () => request('/jobs/optimizer/trigger', { method: 'POST' }),
   getStatus: () => request('/jobs/status'),

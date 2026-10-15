@@ -25,7 +25,8 @@ export default function Settings() {
   const handleTrigger = async (jobId) => {
     setTriggering(prev => ({ ...prev, [jobId]: true }))
     try {
-      if (jobId.includes('crypto')) await jobs.triggerCrypto()
+      if (jobId.includes('stops')) await jobs.triggerCryptoStops()
+      else if (jobId.includes('crypto')) await jobs.triggerCrypto()
       else if (jobId.includes('optimizer')) await jobs.triggerOptimizer()
       else await jobs.triggerStocks()
       refetchJobs()

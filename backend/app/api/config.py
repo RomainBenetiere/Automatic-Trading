@@ -42,6 +42,9 @@ async def get_config() -> dict[str, Any]:
             "crypto": settings.weights_crypto,
         },
         "schedule": {
+            "crypto_candle_interval": settings.crypto_candle_interval,
+            "crypto_strategy_hours": settings.crypto_strategy_cron_hours,
+            "crypto_stops_minutes": settings.crypto_stops_check_cron_minutes,
             "crypto_hour": settings.crypto_schedule_hour,
             "crypto_minute": settings.crypto_schedule_minute,
             "stocks_day": settings.stocks_schedule_day_of_week,
