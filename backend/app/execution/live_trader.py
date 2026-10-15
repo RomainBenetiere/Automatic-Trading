@@ -154,15 +154,51 @@ class LiveTrader:
                 fill_price = result.get("price") or result.get("fills", [{}])[0].get("price")
                 if fill_price:
                     order.price = float(fill_price)
+                filled_amount = result.get("filledAmount")
+                if filled_amount and float(filled_amount) > 0:
+                    order.quantity = float(filled_amount)
+
+                # Recalculate stop-loss and take-profit from actual fill price
+                if action.side == "buy" and order.price:
+                    order.stop_loss_price = self.guardrails.compute_stop_loss(order.price)
+                    order.take_profit_price = self.guardrails.compute_take_profit(order.price)
+                    order.trailing_stop_price = order.stop_loss_price
+                    order.highest_price_since_entry = order.price
 
                 logger.info(
                     "Live trade EXECUTED: %s %s %.8f @ %.2f — order_id=%s",
                     action.side.upper(),
                     action.symbol,
-                    quantity,
+                    order.quantity,
                     order.price or current_price,
                     order.exchange_order_id,
                 )
+
+                # Send native stopLoss order directly to Bitvavo
+                if action.side == "buy" and order.stop_loss_price and order.quantity > 0:
+                    try:
+                        sl_res = self.bitvavo.place_stop_loss_order(
+                            market=order.symbol,
+                            side="sell",
+                            amount=order.quantity,
+                            trigger_price=order.stop_loss_price,
+                        )
+                        if isinstance(sl_res, dict) and "orderId" in sl_res:
+                            order.stop_loss_order_id = sl_res.get("orderId")
+                            logger.info(
+                                "Native Bitvavo Stop-Loss placed for %s: orderId=%s trigger=%.2f",
+                                order.symbol,
+                                order.stop_loss_order_id,
+                                order.stop_loss_price,
+                            )
+                        else:
+                            logger.error(
+                                "Failed to place native Bitvavo Stop-Loss for %s: %s",
+                                order.symbol,
+                                sl_res,
+                            )
+                    except Exception as sl_err:
+                        logger.exception("Exception placing native stop-loss on Bitvavo for %s: %s", order.symbol, sl_err)
             else:
                 order.status = OrderStatus.FAILED
                 error_msg = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
@@ -180,11 +216,15 @@ class LiveTrader:
     async def check_open_positions(
         self,
     ) -> list[dict[str, Any]]:
-        """Check all open live positions for stop/take-profit triggers.
+        """Check all open live positions for stop triggers and update trailing stops.
 
-        Unlike paper trading, this actually places sell orders.
+        1. Checks if native Bitvavo stop-loss order was filled.
+        2. Queries current ticker price.
+        3. Updates highest price since entry and trailing stop level.
+        4. If trailing stop moved up, cancels and replaces the native stop-loss on Bitvavo.
+        5. If take-profit or stop condition met, cancels stop order and closes position via market sell.
         """
-        from sqlalchemy import select, and_
+        from sqlalchemy import and_, select
 
         stmt = select(Order).where(
             and_(
@@ -199,27 +239,102 @@ class LiveTrader:
 
         triggered = []
         for order in open_orders:
+            # 1. Check if the native stop-loss on Bitvavo has already filled
+            if order.stop_loss_order_id:
+                try:
+                    status_res = self.bitvavo.get_order_status(order.symbol, order.stop_loss_order_id)
+                    order_status = status_res.get("status") if isinstance(status_res, dict) else None
+                    if order_status == "filled":
+                        fill_price = float(status_res.get("price") or order.stop_loss_price or order.price or 0.0)
+                        pnl = (fill_price - (order.price or 0.0)) * (order.quantity or 0.0)
+                        order.realised_pnl = round(pnl, 2)
+                        order.closed_at = datetime.utcnow()
+                        order.justification = (
+                            f"{order.justification} | CLOSED: Native Bitvavo stop-loss filled @ {fill_price:.2f}"
+                        )
+                        triggered.append({
+                            "order_id": order.id,
+                            "symbol": order.symbol,
+                            "reason": "bitvavo_native_stop_loss_filled",
+                            "pnl": pnl,
+                            "close_price": fill_price,
+                        })
+                        logger.info(
+                            "Live position CLOSED via native Bitvavo stop: %s @ %.2f — PnL: €%.2f",
+                            order.symbol,
+                            fill_price,
+                            pnl,
+                        )
+                        continue
+                except Exception as e:
+                    logger.warning("Error checking stop-loss status for %s (%s): %s", order.symbol, order.stop_loss_order_id, e)
+
+            # 2. Get current ticker price
             price = self.bitvavo.get_ticker_price(order.symbol)
             if price is None:
                 continue
 
-            # Update trailing stop
-            if order.highest_price_since_entry is not None:
-                new_high = max(price, order.highest_price_since_entry)
-                order.highest_price_since_entry = new_high
-                order.trailing_stop_price = self.guardrails.compute_trailing_stop(
-                    price, new_high
-                )
+            # 3. Update trailing stop
+            highest = order.highest_price_since_entry or order.price or price
+            new_high = max(price, highest)
+            order.highest_price_since_entry = new_high
+            new_trailing = self.guardrails.compute_trailing_stop(price, new_high)
 
-            # Check stop conditions
+            # Check if trailing stop moved UP
+            prev_trailing = order.trailing_stop_price or order.stop_loss_price or 0.0
+            if new_trailing > prev_trailing:
+                order.trailing_stop_price = new_trailing
+                logger.info(
+                    "Trailing stop raised for %s: %.2f -> %.2f (high: %.2f)",
+                    order.symbol,
+                    prev_trailing,
+                    new_trailing,
+                    new_high,
+                )
+                # Cancel previous Bitvavo stop-loss and place a new one with the higher trailing price
+                if order.stop_loss_order_id:
+                    try:
+                        self.bitvavo.cancel_order(order.symbol, order.stop_loss_order_id)
+                        order.stop_loss_order_id = None
+                    except Exception as ce:
+                        logger.warning("Error cancelling old stop order on Bitvavo: %s", ce)
+
+                try:
+                    new_stop_res = self.bitvavo.place_stop_loss_order(
+                        market=order.symbol,
+                        side="sell",
+                        amount=order.quantity,
+                        trigger_price=new_trailing,
+                    )
+                    if isinstance(new_stop_res, dict) and "orderId" in new_stop_res:
+                        order.stop_loss_order_id = new_stop_res.get("orderId")
+                        logger.info(
+                            "Updated native Bitvavo Stop-Loss for %s: orderId=%s trigger=%.2f",
+                            order.symbol,
+                            order.stop_loss_order_id,
+                            new_trailing,
+                        )
+                except Exception as ne:
+                    logger.exception("Error placing updated stop-loss on Bitvavo: %s", ne)
+
+            # 4. Check if take-profit or stop condition met
+            effective_stop = max(order.stop_loss_price or 0.0, order.trailing_stop_price or 0.0)
             should_close, reason = should_trigger_stop(
                 current_price=price,
-                stop_loss_price=order.stop_loss_price,
+                stop_loss_price=effective_stop,
                 take_profit_price=order.take_profit_price,
                 trailing_stop_price=order.trailing_stop_price,
             )
 
             if should_close:
+                # Cancel stop order if still pending
+                if order.stop_loss_order_id:
+                    try:
+                        self.bitvavo.cancel_order(order.symbol, order.stop_loss_order_id)
+                        order.stop_loss_order_id = None
+                    except Exception as ce:
+                        logger.warning("Error cancelling stop-loss before market sell for %s: %s", order.symbol, ce)
+
                 # Place a real sell order
                 try:
                     sell_result = self.bitvavo.place_market_order(

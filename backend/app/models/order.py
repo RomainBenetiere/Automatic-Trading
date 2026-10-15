@@ -50,6 +50,7 @@ class Order(Base):
 
     # External exchange order ID (for live orders)
     exchange_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    stop_loss_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # P&L tracking
     realised_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)

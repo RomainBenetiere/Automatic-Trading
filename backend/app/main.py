@@ -13,7 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.scheduler.jobs import run_crypto_daily_job, run_stocks_weekly_job, run_optimizer_weekly_job
+from app.scheduler.jobs import (
+    run_crypto_daily_job,
+    run_crypto_stops_check_job,
+    run_stocks_weekly_job,
+    run_optimizer_weekly_job,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -36,15 +41,26 @@ async def lifespan(app: FastAPI):
     # Initialise APScheduler
     scheduler = AsyncIOScheduler()
 
-    # Daily crypto job
+    # 4H crypto strategy job
     scheduler.add_job(
         run_crypto_daily_job,
         CronTrigger(
-            hour=settings.crypto_schedule_hour,
-            minute=settings.crypto_schedule_minute,
+            hour=settings.crypto_strategy_cron_hours,
+            minute=0,
         ),
-        id="crypto_daily",
-        name="Daily Crypto Analysis & Trading",
+        id="crypto_strategy_4h",
+        name="Crypto Strategy & Execution (4H)",
+        replace_existing=True,
+    )
+
+    # 15-minute crypto stop-loss and trailing-stop watcher
+    scheduler.add_job(
+        run_crypto_stops_check_job,
+        CronTrigger(
+            minute=settings.crypto_stops_check_cron_minutes,
+        ),
+        id="crypto_stops_watcher",
+        name="Crypto Stop-Loss & Trailing-Stop Watcher (15m)",
         replace_existing=True,
     )
 
@@ -76,9 +92,9 @@ async def lifespan(app: FastAPI):
 
     scheduler.start()
     logger.info(
-        "Scheduler started — crypto daily at %02d:%02d UTC, stocks weekly on %s at %02d:%02d UTC",
-        settings.crypto_schedule_hour,
-        settings.crypto_schedule_minute,
+        "Scheduler started — crypto 4H strategy at UTC hours [%s], crypto stops watcher every [%s] min, stocks weekly on %s at %02d:%02d UTC",
+        settings.crypto_strategy_cron_hours,
+        settings.crypto_stops_check_cron_minutes,
         settings.stocks_schedule_day_of_week,
         settings.stocks_schedule_hour,
         settings.stocks_schedule_minute,
@@ -135,9 +151,17 @@ app.include_router(config_router)
 
 @app.post("/api/jobs/crypto/trigger", tags=["jobs"])
 async def trigger_crypto_job():
-    """Manually trigger the daily crypto analysis job."""
-    logger.info("Manual trigger: crypto daily job")
+    """Manually trigger the 4H crypto analysis job."""
+    logger.info("Manual trigger: crypto 4H strategy job")
     result = await run_crypto_daily_job()
+    return {"status": "completed", "result": result}
+
+
+@app.post("/api/jobs/crypto-stops/trigger", tags=["jobs"])
+async def trigger_crypto_stops_job():
+    """Manually trigger the 15-minute crypto stop-loss / trailing-stop check."""
+    logger.info("Manual trigger: crypto stops check job")
+    result = await run_crypto_stops_check_job()
     return {"status": "completed", "result": result}
 
 

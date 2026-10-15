@@ -216,6 +216,54 @@ class BitvavoClient:
 
         return response
 
+    def place_stop_loss_order(
+        self,
+        market: str,
+        side: str,
+        amount: float,
+        trigger_price: float,
+    ) -> dict[str, Any]:
+        """Place a stop-loss market order.
+
+        Args:
+            market: e.g. "BTC-EUR"
+            side: "buy" or "sell" (typically "sell" to protect a long position)
+            amount: quantity in base currency
+            trigger_price: price at which the order triggers
+
+        Returns order result dict from Bitvavo.
+        """
+        trigger_formatted = (
+            f"{trigger_price:.2f}" if trigger_price >= 1.0 else f"{trigger_price:.4f}"
+        )
+        body: dict[str, Any] = {
+            "market": market,
+            "side": side,
+            "orderType": "stopLoss",
+            "amount": str(round(amount, 8)),
+            "triggerType": "price",
+            "triggerReference": "last",
+            "triggerAmount": trigger_formatted,
+        }
+
+        logger.info(
+            "Bitvavo: placing stopLoss %s order on %s (trigger: %s, amount: %s)",
+            side,
+            market,
+            trigger_formatted,
+            body["amount"],
+        )
+        response = self._bitvavo.placeOrder(
+            market, side, "stopLoss", body
+        )
+
+        if isinstance(response, dict) and "error" in response:
+            logger.error("Bitvavo stop-loss order error: %s", response)
+        else:
+            logger.info("Bitvavo: stop-loss order placed — %s", response)
+
+        return response
+
     def get_order_status(self, market: str, order_id: str) -> dict[str, Any]:
         """Check the status of an existing order."""
         response = self._bitvavo.getOrder(market, order_id)

@@ -152,7 +152,7 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                 base_currency = market.split("-")[0]
 
                 # Fetch candle data
-                candles = bitvavo.get_candles(market, interval="1d", limit=200)
+                candles = bitvavo.get_candles(market, interval=settings.crypto_candle_interval, limit=200)
                 if len(candles) < 20:
                     logger.warning("Not enough candle data for %s (%d)", market, len(candles))
                     continue
@@ -288,6 +288,47 @@ async def run_crypto_daily_job() -> dict[str, Any]:
         await db.commit()
 
     logger.info("═══ CRYPTO DAILY JOB END — %d actions ═══", len(results["actions"]))
+    return results
+
+
+# ── Crypto stops watcher job (15-min) ───────────────────────────────────
+
+async def run_crypto_stops_check_job() -> dict[str, Any]:
+    """Check stops and update trailing stops every 15 minutes for all open positions.
+
+    Works for both Live mode (native Bitvavo stop-loss & trailing cancel-and-replace)
+    and Paper mode (virtual stop-loss & trailing ratchets).
+    """
+    logger.info("═══ CRYPTO STOPS CHECK (15-MIN) START ═══")
+    results: dict[str, Any] = {"timestamp": datetime.utcnow().isoformat(), "triggered": []}
+    bitvavo = BitvavoClient()
+
+    async with async_session() as db:
+        price_cache: dict[str, float | None] = {}
+
+        def get_price(symbol: str) -> float | None:
+            if symbol not in price_cache:
+                price_cache[symbol] = bitvavo.get_ticker_price(symbol)
+            return price_cache[symbol]
+
+        try:
+            if settings.crypto_live_mode:
+                live_trader = LiveTrader(db, bitvavo)
+                triggered = await live_trader.check_open_positions()
+            else:
+                paper_trader = PaperTrader(db)
+                triggered = await paper_trader.check_open_positions(get_price)
+
+            if triggered:
+                results["triggered"] = triggered
+                logger.info("Stops check: %d positions closed/triggered", len(triggered))
+        except Exception as e:
+            logger.exception("Error in crypto stops check job: %s", e)
+            results["error"] = str(e)
+
+        await db.commit()
+
+    logger.info("═══ CRYPTO STOPS CHECK END — %d triggered ═══", len(results["triggered"]))
     return results
 
 

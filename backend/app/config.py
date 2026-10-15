@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     paper_trading_start_date: str = ""
 
     # ── Scheduler (UTC) ─────────────────────────────────────────────────
+    crypto_candle_interval: str = "4h"
+    crypto_strategy_cron_hours: str = "0,4,8,12,16,20"
+    crypto_stops_check_cron_minutes: str = "*/15"
     crypto_schedule_hour: int = Field(default=8, ge=0, le=23)
     crypto_schedule_minute: int = Field(default=0, ge=0, le=59)
     stocks_schedule_day_of_week: str = "sun"

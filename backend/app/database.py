@@ -54,3 +54,10 @@ async def init_db() -> None:
                     await conn.execute(
                         text(f"ALTER TABLE {table_name} ADD COLUMN account_name VARCHAR(128) NOT NULL DEFAULT ''")
                     )
+
+            res = await conn.execute(text("PRAGMA table_info(orders)"))
+            columns = [row[1] for row in res.fetchall()]
+            if columns and "stop_loss_order_id" not in columns:
+                await conn.execute(
+                    text("ALTER TABLE orders ADD COLUMN stop_loss_order_id VARCHAR(128)")
+                )

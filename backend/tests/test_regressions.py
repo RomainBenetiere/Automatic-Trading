@@ -278,4 +278,153 @@ async def test_init_db_auto_migration():
         cols = [r[1] for r in res.fetchall()]
         assert "account_name" in cols
 
+        res = await conn.execute(text("PRAGMA table_info(orders)"))
+        cols = [r[1] for r in res.fetchall()]
+        assert "stop_loss_order_id" in cols
+
+
+# ── Native Bitvavo Stop-Loss & 15-Minute Trailing Stops ─────────────────
+
+def test_bitvavo_place_stop_loss_order():
+    from app.collectors.bitvavo import BitvavoClient
+
+    client = BitvavoClient(api_key="k", api_secret="s")
+    captured = {}
+
+    def fake_place_order(market, side, order_type, body):
+        captured["market"] = market
+        captured["side"] = side
+        captured["order_type"] = order_type
+        captured["body"] = body
+        return {"orderId": "sl-12345", "status": "awaitingTrigger"}
+
+    client._bitvavo.placeOrder = fake_place_order
+
+    res = client.place_stop_loss_order(
+        market="BTC-EUR",
+        side="sell",
+        amount=0.012345678,
+        trigger_price=64500.50,
+    )
+    assert res.get("orderId") == "sl-12345"
+    assert captured["market"] == "BTC-EUR"
+    assert captured["side"] == "sell"
+    assert captured["order_type"] == "stopLoss"
+    assert captured["body"]["orderType"] == "stopLoss"
+    assert captured["body"]["triggerAmount"] == "64500.50"
+    assert captured["body"]["amount"] == "0.01234568"
+    assert captured["body"]["triggerReference"] == "last"
+
+
+@pytest.mark.asyncio
+async def test_live_trader_places_stop_loss_and_trailing_stop_updates(db, monkeypatch):
+    from app.collectors.bitvavo import BitvavoClient
+    from app.config import settings
+    from app.execution.live_trader import LiveTrader
+
+    monkeypatch.setattr(settings, "crypto_live_mode", True)
+
+    client = BitvavoClient(api_key="k", api_secret="s")
+    placed_orders = []
+    cancelled_orders = []
+
+    def fake_place_market(market, side, amount=None, quote_amount=None):
+        return {"orderId": "buy-100", "price": "60000.0", "filledAmount": "0.01"}
+
+    def fake_place_stop(market, side, amount, trigger_price):
+        placed_orders.append({"market": market, "side": side, "amount": amount, "trigger_price": trigger_price})
+        return {"orderId": f"sl-{len(placed_orders)}"}
+
+    def fake_cancel_order(market, order_id):
+        cancelled_orders.append({"market": market, "order_id": order_id})
+        return {"orderId": order_id}
+
+    prices = {"BTC-EUR": 60000.0}
+
+    def fake_get_price(market):
+        return prices.get(market)
+
+    client.place_market_order = fake_place_market
+    client.place_stop_loss_order = fake_place_stop
+    client.cancel_order = fake_cancel_order
+    client.get_ticker_price = fake_get_price
+    client.get_order_status = lambda m, oid: {"status": "awaitingTrigger"}
+
+    trader = LiveTrader(db, client)
+
+    # 1. Buy action -> places buy order and immediately sends native stop-loss
+    action = TradeAction(
+        symbol="BTC-EUR",
+        side="buy",
+        quote_amount_eur=600.0,
+        reason="Test buy",
+    )
+    order = await trader.execute_action(action, current_price=60000.0, portfolio_value_eur=20000.0)
+
+    assert order is not None
+    assert order.status == OrderStatus.FILLED
+    assert order.stop_loss_order_id == "sl-1"
+    assert len(placed_orders) == 1
+    # Stop-loss at 5% below 60000 is 57000
+    assert placed_orders[0]["trigger_price"] == 57000.0
+
+    # 2. Check open positions with price increase (price rises to 65000, below 69000 take-profit)
+    prices["BTC-EUR"] = 65000.0
+    await trader.check_open_positions()
+
+    # Trailing stop should have been updated: old cancelled, new stop placed
+    assert len(cancelled_orders) == 1
+    assert cancelled_orders[0]["order_id"] == "sl-1"
+    assert len(placed_orders) == 2
+    # 3% trailing stop from 65000 is 65000 * 0.97 = 63050
+    assert placed_orders[1]["trigger_price"] == 63050.0
+    assert order.stop_loss_order_id == "sl-2"
+
+    # 3. Check open positions when native stop fills on Bitvavo
+    client.get_order_status = lambda m, oid: {"status": "filled", "price": "63050.0"}
+    triggered = await trader.check_open_positions()
+
+    assert len(triggered) == 1
+    assert triggered[0]["reason"] == "bitvavo_native_stop_loss_filled"
+    assert order.closed_at is not None
+    assert order.realised_pnl == pytest.approx((63050.0 - 60000.0) * 0.01)
+
+
+@pytest.mark.asyncio
+async def test_paper_trader_stops_and_4h_config(db):
+    from app.config import settings
+    from app.execution.paper_trader import PaperTrader
+    from app.scheduler.jobs import run_crypto_stops_check_job
+
+    assert settings.crypto_candle_interval == "4h"
+
+    trader = PaperTrader(db)
+    prices = {"BTC-EUR": 50000.0}
+
+    # 1. Create paper buy (take-profit is 50000 * 1.15 = 57500)
+    action = TradeAction(
+        symbol="BTC-EUR",
+        side="buy",
+        quote_amount_eur=500.0,
+        reason="Test paper buy",
+    )
+    order = await trader.execute_action(action, current_price=50000.0, portfolio_value_eur=20000.0)
+    assert order is not None
+    assert order.status == OrderStatus.PAPER
+    assert order.trailing_stop_price == 47500.0  # 50000 * 0.95
+
+    # 2. Price climbs to 55000 (below 57500 TP) -> trailing stop ratchets to 55000 * 0.97 = 53350
+    prices["BTC-EUR"] = 55000.0
+    await trader.check_open_positions(prices.get)
+    assert order.trailing_stop_price == 53350.0
+    assert order.closed_at is None
+
+    # 3. Price drops to 53000 (< 53350) -> triggers trailing stop
+    prices["BTC-EUR"] = 53000.0
+    triggered = await trader.check_open_positions(prices.get)
+    assert len(triggered) == 1
+    assert order.closed_at is not None
+    assert order.realised_pnl is not None
+
+
 
