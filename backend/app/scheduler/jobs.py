@@ -383,6 +383,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
             for h in holdings:
                 position = Position(**h)
                 db.add(position)
+            await db.commit()
 
             # Filter non-crypto positions
             non_crypto = [h for h in holdings if h["asset_type"] != AssetType.CRYPTO]
@@ -583,6 +584,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         score_id=score_record.id,
                     )
                     db.add(recommendation)
+                    await db.commit()
 
                     # Save to cache so other accounts holding this symbol reuse it
                     computed_scores[symbol] = (score_record, composite, narrative)
@@ -669,6 +671,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                             cfg.oos_sharpe = opt.oos_sharpe
                             cfg.oos_sortino = opt.oos_sortino
                             cfg.oos_return = opt.oos_return
+                            await db.commit()
 
                             results["optimizations"].append({"symbol": market, "improved": True, "oos_sharpe": opt.oos_sharpe})
                     except Exception as e:
@@ -703,6 +706,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                             cfg.oos_sharpe = opt.oos_sharpe
                             cfg.oos_sortino = opt.oos_sortino
                             cfg.oos_return = opt.oos_return
+                            await db.commit()
 
                             results["optimizations"].append({"symbol": symbol, "improved": True, "oos_sharpe": opt.oos_sharpe})
                     except Exception as e:
