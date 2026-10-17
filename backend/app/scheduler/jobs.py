@@ -183,6 +183,15 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                     weight_override=(1.0, 0.0, 0.0),
                 )
 
+                # Replace any score or market data already recorded today for this market
+                # (since the 4H crypto job runs multiple times per day)
+                await db.execute(
+                    delete(Score).where(Score.symbol == market, Score.date == date.today())
+                )
+                await db.execute(
+                    delete(MarketData).where(MarketData.symbol == market, MarketData.date == date.today())
+                )
+
                 # Store score
                 score_record = Score(
                     symbol=market,
@@ -267,7 +276,10 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                         "action": "hold",
                     })
 
+                await db.commit()
+
             except Exception as e:
+                await db.rollback()
                 logger.exception("Error processing %s: %s", market, e)
                 results["actions"].append({"symbol": market, "error": str(e)})
 
@@ -283,10 +295,10 @@ async def run_crypto_daily_job() -> dict[str, Any]:
             if triggered:
                 results["stops_triggered"] = triggered
                 logger.info("Stops triggered: %d positions closed", len(triggered))
+            await db.commit()
         except Exception as e:
+            await db.rollback()
             logger.exception("Error checking stops: %s", e)
-
-        await db.commit()
 
     logger.info("═══ CRYPTO DAILY JOB END — %d actions ═══", len(results["actions"]))
     return results
@@ -376,17 +388,24 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
             holdings = await ghostfolio.get_holdings()
             logger.info("Fetched %d holdings from Ghostfolio", len(holdings))
 
-            # Store positions (replace any snapshot and scores/recommendations already taken today)
+            # Filter non-crypto positions
+            non_crypto = [h for h in holdings if h["asset_type"] != AssetType.CRYPTO]
+            non_crypto_symbols = list({h["symbol"] for h in non_crypto})
+
+            # Store positions (replace any snapshot and non-crypto scores/recommendations already taken today)
             await db.execute(delete(Position).where(Position.snapshot_date == date.today()))
             await db.execute(delete(Recommendation).where(Recommendation.date == date.today()))
-            await db.execute(delete(Score).where(Score.date == date.today()))
+            if non_crypto_symbols:
+                await db.execute(
+                    delete(Score).where(
+                        Score.date == date.today(),
+                        Score.symbol.in_(non_crypto_symbols),
+                    )
+                )
             for h in holdings:
                 position = Position(**h)
                 db.add(position)
             await db.commit()
-
-            # Filter non-crypto positions
-            non_crypto = [h for h in holdings if h["asset_type"] != AssetType.CRYPTO]
 
             # Cache to avoid re-analyzing the same symbol across multiple accounts
             computed_scores: dict[str, tuple[Score, CompositeResult, str]] = {}
@@ -418,6 +437,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                             score_id=score_record.id,
                         )
                         db.add(rec)
+                        await db.commit()
                         results["recommendations"].append({
                             "symbol": symbol,
                             "name": holding["name"],
@@ -524,7 +544,10 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                         is_accumulating=is_accumulating,
                     )
 
-                    # Store score
+                    # Store score (replace if already present for today)
+                    await db.execute(
+                        delete(Score).where(Score.symbol == symbol, Score.date == date.today())
+                    )
                     score_record = Score(
                         symbol=symbol,
                         date=date.today(),
@@ -607,6 +630,7 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                     )
 
                 except Exception as e:
+                    await db.rollback()
                     logger.exception("Error processing %s: %s", symbol, e)
                     results["recommendations"].append({
                         "symbol": symbol,

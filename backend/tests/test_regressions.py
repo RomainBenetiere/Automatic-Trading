@@ -524,5 +524,80 @@ def test_score_technical_with_custom_weights():
     assert s_heavy_rsi < 35.0
 
 
+@pytest.mark.asyncio
+async def test_crypto_daily_job_multiple_runs_and_stocks_job_preserve_crypto_scores(db, monkeypatch):
+    from contextlib import asynccontextmanager
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.config import settings
+    from app.collectors.bitvavo import BitvavoClient
+    from app.collectors.ghostfolio import GhostfolioClient
+    from app.models.score import Score
+    from app.models.position import AccountType, AssetType
+    from app.scheduler import jobs as scheduler_jobs
 
+    @asynccontextmanager
+    async def fake_session():
+        yield db
 
+    monkeypatch.setattr(scheduler_jobs, "async_session", fake_session)
+
+    # Mock Bitvavo candles + prices
+    now = datetime.utcnow()
+    dummy_candles = [
+        {
+            "datetime": now - timedelta(hours=4 * (40 - i)),
+            "open": 100.0 + i,
+            "high": 105.0 + i,
+            "low": 95.0 + i,
+            "close": 102.0 + i,
+            "volume": 1000.0,
+        }
+        for i in range(40)
+    ]
+    monkeypatch.setattr(BitvavoClient, "get_candles", lambda self, market, interval="4h", limit=200: dummy_candles)
+    monkeypatch.setattr(BitvavoClient, "get_ticker_price", lambda self, symbol: 140.0)
+
+    # 1st run with initial 5 cryptos
+    monkeypatch.setattr(settings, "crypto_basket", "BTC-EUR,ETH-EUR,SOL-EUR,XRP-EUR,ADA-EUR")
+    res1 = await scheduler_jobs.run_crypto_daily_job()
+    assert len(res1["actions"]) == 5
+    assert all("error" not in a for a in res1["actions"])
+
+    # 2nd run on the same day after adding new cryptos to CRYPTO_BASKET
+    full_basket = "BTC-EUR,ETH-EUR,SOL-EUR,XRP-EUR,ADA-EUR,BNB-EUR,TAO-EUR,AAVE-EUR,ONDO-EUR,ICNT-EUR,EIGEN-EUR,GTC-EUR"
+    monkeypatch.setattr(settings, "crypto_basket", full_basket)
+    res2 = await scheduler_jobs.run_crypto_daily_job()
+    assert len(res2["actions"]) == 12
+    assert all("error" not in a for a in res2["actions"])
+
+    scores_after_crypto = (await db.execute(select(Score))).scalars().all()
+    assert {s.symbol for s in scores_after_crypto} == set(full_basket.split(","))
+
+    # Now run stocks weekly job on the same day and ensure crypto scores are NOT wiped out
+    async def fake_holdings(self):
+        return [
+            {
+                "symbol": "AAPL",
+                "name": "Apple Inc.",
+                "asset_type": AssetType.STOCK,
+                "account_type": AccountType.CTO,
+                "account_name": "CTO",
+                "quantity": 10.0,
+                "avg_buy_price": 150.0,
+                "current_price": 180.0,
+                "total_value": 1800.0,
+                "unrealized_pnl": 300.0,
+                "unrealized_pnl_pct": 20.0,
+                "currency": "EUR",
+                "snapshot_date": now.date(),
+            }
+        ]
+
+    monkeypatch.setattr(GhostfolioClient, "get_holdings", fake_holdings)
+    await scheduler_jobs.run_stocks_weekly_job()
+
+    scores_after_stocks = (await db.execute(select(Score))).scalars().all()
+    scored_symbols = {s.symbol for s in scores_after_stocks}
+    for crypto_sym in full_basket.split(","):
+        assert crypto_sym in scored_symbols

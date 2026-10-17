@@ -92,7 +92,9 @@ export default function Dashboard() {
     setActionError(null)
     try {
       await Promise.all([jobs.triggerStocks(), jobs.triggerCrypto()])
-      setTimeout(() => refetchScores(), 2500)
+      setTimeout(() => refetchScores(), 3000)
+      setTimeout(() => refetchScores(), 7000)
+      setTimeout(() => refetchScores(), 15000)
     } catch (e) {
       console.error(e)
       setActionError(e.message)
