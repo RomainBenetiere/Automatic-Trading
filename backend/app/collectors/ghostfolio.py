@@ -145,15 +145,15 @@ class GhostfolioClient:
 
                 holdings.append(
                     {
-                        "symbol": symbol,
-                        "name": item.get("name", symbol),
+                        "symbol": str(symbol),
+                        "name": str(item.get("name") or symbol),
                         "asset_type": asset_type,
                         "account_type": account_type,
                         "account_name": str(account_name).strip() if account_name else "",
                         "quantity": float(item.get("quantity") or 0),
-                        "avg_cost": item.get("averagePrice"),
-                        "current_price": item.get("marketPrice"),
-                        "currency": item.get("currency", "EUR"),
+                        "avg_cost": float(item["averagePrice"]) if item.get("averagePrice") is not None else None,
+                        "current_price": float(item["marketPrice"]) if item.get("marketPrice") is not None else None,
+                        "currency": str(item.get("currency") or "EUR"),
                         "snapshot_date": date.today(),
                     }
                 )

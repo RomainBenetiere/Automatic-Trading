@@ -104,16 +104,26 @@ async def get_position_detail(
 @router.post("/sync")
 async def sync_positions(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """Trigger a manual Ghostfolio sync (replaces today's snapshot)."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     client = GhostfolioClient()
     try:
         holdings = await client.get_holdings()
     except Exception as e:
+        logger.exception("Ghostfolio sync failed: %s", e)
         raise HTTPException(status_code=502, detail=f"Ghostfolio sync failed: {e}")
     finally:
         await client.close()
 
-    await db.execute(delete(Position).where(Position.snapshot_date == date.today()))
-    for h in holdings:
-        db.add(Position(**h))
-    await db.commit()
+    try:
+        await db.execute(delete(Position).where(Position.snapshot_date == date.today()))
+        for h in holdings:
+            db.add(Position(**h))
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Database error while saving synced positions: %s", e)
+        raise HTTPException(status_code=500, detail=f"Erreur base de données lors de la synchronisation: {e}")
+
     return {"status": "ok", "synced": len(holdings)}

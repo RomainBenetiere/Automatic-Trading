@@ -53,11 +53,18 @@ async def get_latest_scores(
     scores = result.scalars().all()
     names_map = await _get_symbol_names(db)
 
+    seen = set()
+    unique_scores = []
+    for s in scores:
+        if s.symbol not in seen:
+            seen.add(s.symbol)
+            unique_scores.append(s)
+
     return [
         {
             "symbol": s.symbol,
             "name": names_map.get(s.symbol, s.symbol),
-            "date": s.date.isoformat(),
+            "date": s.date.isoformat() if s.date else "",
             "technical_score": s.technical_score,
             "fundamental_score": s.fundamental_score,
             "dividend_score": s.dividend_score,
@@ -65,7 +72,7 @@ async def get_latest_scores(
             "signal": s.signal,
             "weights_used": s.weights_used,
         }
-        for s in scores
+        for s in unique_scores
     ]
 
 
