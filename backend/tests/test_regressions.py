@@ -618,3 +618,29 @@ def test_custom_buy_and_strong_buy_pct_from_env(monkeypatch):
     assert act_buy is not None and act_buy.quote_amount_eur == 75.0
     assert act_strong is not None and act_strong.quote_amount_eur == 120.0
 
+
+def test_two_stage_optimizer_optimizes_windows_and_weights():
+    import numpy as np
+    import pandas as pd
+    from app.analysis.optimizer import optimize_parameters, INDICATOR_KEYS
+
+    rng = np.random.default_rng(123)
+    n = 150
+    # Upward trend with cyclical waves so indicators have clear signal opportunities
+    t = np.linspace(0, 6 * np.pi, n)
+    close = 100.0 + np.linspace(0, 35, n) + 8.0 * np.sin(t) + rng.normal(0, 0.5, n)
+    df = pd.DataFrame({
+        "open": close - 0.5,
+        "high": close + 1.5,
+        "low": close - 1.5,
+        "close": close,
+        "volume": 1000.0 + 200.0 * np.cos(t),
+    })
+
+    opt = optimize_parameters(df, "TEST-EUR")
+    assert "weights" in opt.best_params
+    weights = opt.best_params["weights"]
+    for key in INDICATOR_KEYS:
+        assert key in weights
+        assert 0.0 <= weights[key] <= 3.0
+    assert opt.oos_return >= 0.0

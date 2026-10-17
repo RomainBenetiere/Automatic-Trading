@@ -263,6 +263,7 @@ export default function Optimizer() {
                     <th>RSI Fenêtre</th>
                     <th>MACD (Fast / Slow / Sig)</th>
                     <th>Bollinger</th>
+                    <th>Poids Indicateurs Optimisés</th>
                     <th>Sharpe OOS</th>
                     <th>Sortino OOS</th>
                     <th>Rendement OOS</th>
@@ -272,6 +273,17 @@ export default function Optimizer() {
                 <tbody>
                   {filteredList.map((item) => {
                     const p = item.parameters || {}
+                    const w = p.weights || null
+                    const weightLabels = [
+                      ['sma_cross', 'SMA'],
+                      ['ema_cross', 'EMA'],
+                      ['macd', 'MACD'],
+                      ['rsi', 'RSI'],
+                      ['roc', 'ROC'],
+                      ['stochastic', 'Stoch'],
+                      ['bollinger', 'Boll'],
+                      ['obv', 'OBV'],
+                    ]
                     const sharpe = item.oos_sharpe
                     const sharpeClass =
                       sharpe == null
@@ -345,6 +357,42 @@ export default function Optimizer() {
                             <span>{p.bollinger_window} (std: {p.bollinger_std || 2.0})</span>
                           ) : (
                             <span style={{ color: 'var(--text-muted)' }}>Défaut</span>
+                          )}
+                        </td>
+                        <td>
+                          {w ? (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 260 }}>
+                              {weightLabels.map(([key, label]) => {
+                                const val = w[key] != null ? Number(w[key]) : 1.0
+                                const isHigh = val > 1.0
+                                const isZero = val === 0
+                                return (
+                                  <span
+                                    key={key}
+                                    style={{
+                                      fontSize: '0.7rem',
+                                      padding: '2px 5px',
+                                      borderRadius: 4,
+                                      fontFamily: 'monospace',
+                                      opacity: isZero ? 0.45 : 1,
+                                      background: isHigh
+                                        ? 'rgba(6, 182, 212, 0.16)'
+                                        : 'rgba(148, 163, 184, 0.12)',
+                                      color: isHigh
+                                        ? 'var(--accent-primary)'
+                                        : 'var(--text-secondary)',
+                                      border: isHigh
+                                        ? '1px solid rgba(6, 182, 212, 0.35)'
+                                        : '1px solid transparent',
+                                    }}
+                                  >
+                                    {label}:{val}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>Uniforme (1.0)</span>
                           )}
                         </td>
                         <td className={`cell-number ${sharpeClass}`}>

@@ -171,8 +171,9 @@ async def run_crypto_daily_job() -> dict[str, Any]:
                 params = get_params(regime, db_overrides)
                 df = compute_indicators(df, params)
 
-                # Score
-                tech_score, tech_signals = score_technical(df)
+                # Score (use per-asset optimized indicator weights if available)
+                custom_weights = db_overrides.get("weights") if isinstance(db_overrides, dict) else None
+                tech_score, tech_signals = score_technical(df, weights=custom_weights)
                 fund_score = 50.0  # Neutral for crypto
                 div_score = 50.0   # N/A for crypto
 
@@ -474,7 +475,8 @@ async def run_stocks_weekly_job() -> dict[str, Any]:
                     db_overrides = json.loads(config.parameters) if config and config.parameters else None
                     params = get_params(regime, db_overrides)
                     df = compute_indicators(df, params)
-                    tech_score, tech_signals = score_technical(df)
+                    custom_weights = db_overrides.get("weights") if isinstance(db_overrides, dict) else None
+                    tech_score, tech_signals = score_technical(df, weights=custom_weights)
 
                     # Fundamental analysis
                     is_etf = asset_type == AssetType.ETF
@@ -685,8 +687,8 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                         df = pd.DataFrame(candles).rename(columns={"datetime": "date"}).set_index("date")
 
                         opt = optimize_parameters(df, market)
-                        if opt.improved:
-                            cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
+                        cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
+                        if opt.improved or (cfg is not None and (cfg.oos_return is None or opt.oos_return > cfg.oos_return)):
                             if not cfg:
                                 cfg = IndicatorConfig(symbol=market, indicator_name="all")
                                 db.add(cfg)
@@ -697,8 +699,14 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                             cfg.oos_return = opt.oos_return
                             await db.commit()
 
-                            results["optimizations"].append({"symbol": market, "improved": True, "oos_sharpe": opt.oos_sharpe})
+                            results["optimizations"].append({
+                                "symbol": market,
+                                "improved": True,
+                                "oos_sharpe": opt.oos_sharpe,
+                                "oos_return": opt.oos_return,
+                            })
                     except Exception as e:
+                        await db.rollback()
                         logger.exception("Error optimizing %s: %s", market, e)
 
                 # 2. Stocks/ETFs/Bonds (from current portfolio)
@@ -720,8 +728,8 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                                 df[col] = df.get("adjClose", df.get("close", 0))
 
                         opt = optimize_parameters(df, symbol)
-                        if opt.improved:
-                            cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
+                        cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
+                        if opt.improved or (cfg is not None and (cfg.oos_return is None or opt.oos_return > cfg.oos_return)):
                             if not cfg:
                                 cfg = IndicatorConfig(symbol=symbol, indicator_name="all")
                                 db.add(cfg)
@@ -732,8 +740,14 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                             cfg.oos_return = opt.oos_return
                             await db.commit()
 
-                            results["optimizations"].append({"symbol": symbol, "improved": True, "oos_sharpe": opt.oos_sharpe})
+                            results["optimizations"].append({
+                                "symbol": symbol,
+                                "improved": True,
+                                "oos_sharpe": opt.oos_sharpe,
+                                "oos_return": opt.oos_return,
+                            })
                     except Exception as e:
+                        await db.rollback()
                         logger.exception("Error optimizing %s: %s", symbol, e)
 
             except Exception as e:
