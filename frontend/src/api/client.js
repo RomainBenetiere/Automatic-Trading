@@ -63,6 +63,10 @@ export const crypto = {
   getGuardrailStatus: () => request('/crypto/guardrails/status'),
   getCircuitBreakerEvents: () => request('/crypto/circuit-breaker/events'),
   getPerformance: (days = 30) => request(`/crypto/performance?days=${days}`),
+  getScreener: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request(`/crypto/screener${qs ? '?' + qs : ''}`)
+  },
 }
 
 // ── Config ─────────────────────────────────────────────────────

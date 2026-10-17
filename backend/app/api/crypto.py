@@ -1,19 +1,28 @@
-"""Crypto execution API routes — positions, orders, guardrails, performance."""
-
-from __future__ import annotations
-
+import asyncio
+import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, desc, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analysis.composite import compute_composite
+from app.analysis.technical import (
+    classify_volatility,
+    compute_indicators,
+    get_params,
+    score_technical,
+)
 from app.collectors.bitvavo import BitvavoClient
 from app.config import settings
 from app.database import get_db
 from app.models.circuit_breaker import CircuitBreakerEvent
 from app.models.order import Order, OrderSide, OrderStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/crypto", tags=["crypto"])
 
@@ -313,7 +322,96 @@ async def get_performance(
         "win_rate": round(win_rate, 3),
         "avg_pnl_per_trade": round(total_pnl / total_trades, 2),
         "best_trade_eur": round(max((o.realised_pnl or 0) for o in closed_orders), 2),
-        "worst_trade_eur": round(min((o.realised_pnl or 0) for o in closed_orders), 2),
         "max_drawdown_eur": round(max_drawdown, 2),
         "max_drawdown_pct": round(max_dd_pct, 2),
     }
+
+
+# ── Crypto Market Screener ──────────────────────────────────────────────
+
+_screener_cache: dict[str, Any] = {"timestamp": 0.0, "key": "", "data": {}}
+
+
+@router.get("/screener")
+async def get_crypto_screener(
+    limit: int = Query(30, ge=5, le=100),
+    with_scores: bool = Query(True),
+    force_refresh: bool = Query(False),
+) -> dict[str, Any]:
+    """Get the top most relevant crypto assets from Bitvavo with technical scores."""
+    now = time.time()
+    cache_key = f"{limit}_{with_scores}"
+    if (
+        not force_refresh
+        and (now - _screener_cache.get("timestamp", 0) < 60)
+        and _screener_cache.get("key") == cache_key
+    ):
+        return _screener_cache["data"]
+
+    client = BitvavoClient()
+    top_markets = await asyncio.to_thread(client.get_top_markets, limit=limit)
+    basket_set = set(settings.crypto_basket_list)
+
+    # Get live balances to know what the user already holds
+    try:
+        balances = await asyncio.to_thread(client.get_balances)
+        held_symbols = {b["symbol"] for b in balances if b.get("total", 0) > 0}
+    except Exception:
+        held_symbols = set()
+
+    def analyze_market(m: dict[str, Any]) -> dict[str, Any]:
+        market = m["market"]
+        base = m["symbol"]
+        in_basket = market in basket_set
+        in_portfolio = base in held_symbols
+        tech_score = None
+        signal = "neutral"
+        rsi = None
+
+        if with_scores:
+            try:
+                candles = client.get_candles(
+                    market, interval=settings.crypto_candle_interval, limit=100
+                )
+                if len(candles) >= 20:
+                    df = pd.DataFrame(candles).rename(columns={"datetime": "date"}).set_index("date")
+                    regime = classify_volatility(df)
+                    params = get_params(regime)
+                    df = compute_indicators(df, params)
+                    raw_tech, _ = score_technical(df)
+                    comp = compute_composite(
+                        raw_tech, 50.0, 50.0, asset_type="crypto", weight_override=(1.0, 0.0, 0.0)
+                    )
+                    tech_score = comp.composite_score
+                    signal = comp.signal
+                    if "rsi" in df.columns and len(df["rsi"].dropna()) > 0:
+                        rsi = round(float(df["rsi"].iloc[-1]), 1)
+            except Exception as e:
+                logger.warning("Error calculating screener score for %s: %s", market, e)
+
+        return {
+            **m,
+            "in_basket": in_basket,
+            "in_portfolio": in_portfolio,
+            "technical_score": tech_score,
+            "signal": signal,
+            "rsi": rsi,
+        }
+
+    # Parallelize candle fetching and scoring across worker threads
+    analyzed = await asyncio.gather(
+        *(asyncio.to_thread(analyze_market, m) for m in top_markets)
+    )
+
+    result = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "candle_interval": settings.crypto_candle_interval,
+        "current_basket": settings.crypto_basket_list,
+        "count": len(analyzed),
+        "markets": list(analyzed),
+    }
+
+    _screener_cache["timestamp"] = now
+    _screener_cache["key"] = cache_key
+    _screener_cache["data"] = result
+    return result

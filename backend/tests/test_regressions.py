@@ -427,4 +427,69 @@ async def test_paper_trader_stops_and_4h_config(db):
     assert order.realised_pnl is not None
 
 
+# ── #16 Bitvavo Top Markets & Screener ────────────────────────────────
+
+def test_bitvavo_get_top_markets_filters_stables_and_sorts(monkeypatch):
+    from app.collectors.bitvavo import BitvavoClient
+
+    client = BitvavoClient(api_key="", api_secret="")
+
+    mock_ticker_data = [
+        {"market": "USDT-EUR", "last": "1.0", "open": "1.0", "high": "1.01", "low": "0.99", "volume": "50000000", "volumeQuote": "50000000"},
+        {"market": "USDC-EUR", "last": "1.0", "open": "1.0", "high": "1.01", "low": "0.99", "volume": "20000000", "volumeQuote": "20000000"},
+        {"market": "BTC-USD", "last": "65000", "open": "64000", "high": "66000", "low": "63000", "volume": "100", "volumeQuote": "6500000"},
+        {"market": "BTC-EUR", "last": "60000", "open": "58000", "high": "61000", "low": "57500", "volume": "200", "volumeQuote": "12000000"},
+        {"market": "ETH-EUR", "last": "3000", "open": "2900", "high": "3050", "low": "2850", "volume": "2000", "volumeQuote": "6000000"},
+        {"market": "SOL-EUR", "last": "150", "open": "140", "high": "155", "low": "138", "volume": "50000", "volumeQuote": "7500000"},
+    ]
+
+    monkeypatch.setattr(client._bitvavo, "ticker24h", lambda opts: mock_ticker_data)
+
+    markets = client.get_top_markets(limit=2, quote="EUR", exclude_stables=True)
+
+    # Stables (USDT, USDC) and non-EUR (BTC-USD) must be excluded
+    # Remaining: BTC-EUR (12M), SOL-EUR (7.5M), ETH-EUR (6M)
+    # Sorted descending by volumeQuote, limit 2: BTC-EUR first, SOL-EUR second
+    assert len(markets) == 2
+    assert markets[0]["symbol"] == "BTC"
+    assert markets[0]["market"] == "BTC-EUR"
+    assert markets[0]["volume_eur"] == 12000000.0
+    assert markets[0]["change_24h_pct"] == pytest.approx(3.45, rel=1e-2)
+
+    assert markets[1]["symbol"] == "SOL"
+    assert markets[1]["market"] == "SOL-EUR"
+    assert markets[1]["volume_eur"] == 7500000.0
+
+
+@pytest.mark.asyncio
+async def test_crypto_screener_api_endpoint(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    # Mock BitvavoClient methods
+    mock_markets = [
+        {"symbol": "BTC", "market": "BTC-EUR", "price": 60000.0, "volume_eur": 1000000.0, "change_24h_pct": 2.5},
+        {"symbol": "ETH", "market": "ETH-EUR", "price": 3000.0, "volume_eur": 500000.0, "change_24h_pct": -1.2},
+    ]
+
+    from app.collectors.bitvavo import BitvavoClient
+    monkeypatch.setattr(BitvavoClient, "get_top_markets", lambda self, limit=30, quote="EUR", exclude_stables=True: mock_markets)
+    monkeypatch.setattr(BitvavoClient, "get_balances", lambda self: [{"symbol": "BTC", "total": 0.05}])
+    monkeypatch.setattr(BitvavoClient, "get_candles", lambda self, market, interval="4h", limit=100: [])
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get("/api/crypto/screener?limit=10&with_scores=false&force_refresh=true")
+        assert response.status_code == 200
+        data = response.json()
+        assert "markets" in data
+        assert "current_basket" in data
+        assert data["count"] == 2
+        btc = next(m for m in data["markets"] if m["symbol"] == "BTC")
+        assert btc["in_portfolio"] is True
+        eth = next(m for m in data["markets"] if m["symbol"] == "ETH")
+        assert eth["in_portfolio"] is False
+
+
+
 
