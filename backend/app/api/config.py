@@ -34,6 +34,8 @@ async def get_config() -> dict[str, Any]:
             "circuit_breaker_cumulative_loss_pct": settings.crypto_circuit_breaker_cumulative_loss_pct,
             "circuit_breaker_window_days": settings.crypto_circuit_breaker_window_days,
             "global_budget_eur": settings.crypto_global_budget_eur,
+            "buy_cooldown_days": settings.crypto_buy_cooldown_days,
+            "max_allocation_pct": settings.crypto_max_allocation_pct,
         },
         "weights": {
             "stocks": settings.weights_stocks,
