@@ -91,8 +91,8 @@ export default function Dashboard() {
     setTriggering(true)
     setActionError(null)
     try {
-      await jobs.triggerStocks()
-      refetchScores()
+      await Promise.all([jobs.triggerStocks(), jobs.triggerCrypto()])
+      setTimeout(() => refetchScores(), 2500)
     } catch (e) {
       console.error(e)
       setActionError(e.message)
