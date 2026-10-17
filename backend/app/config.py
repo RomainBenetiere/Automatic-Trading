@@ -89,6 +89,29 @@ class Settings(BaseSettings):
     weights_bonds: str = "20,30,50"
     weights_crypto: str = "100,0,0"
 
+    # ── Technical indicator weights ─────────────────────────────────────
+    tech_weight_sma_cross: float = 1.0
+    tech_weight_ema_cross: float = 1.0
+    tech_weight_macd: float = 1.0
+    tech_weight_rsi: float = 1.0
+    tech_weight_roc: float = 1.0
+    tech_weight_stochastic: float = 1.0
+    tech_weight_bollinger: float = 1.0
+    tech_weight_obv: float = 1.0
+
+    @property
+    def technical_weights(self) -> dict[str, float]:
+        return {
+            "sma_cross": self.tech_weight_sma_cross,
+            "ema_cross": self.tech_weight_ema_cross,
+            "macd": self.tech_weight_macd,
+            "rsi": self.tech_weight_rsi,
+            "roc": self.tech_weight_roc,
+            "stochastic": self.tech_weight_stochastic,
+            "bollinger": self.tech_weight_bollinger,
+            "obv": self.tech_weight_obv,
+        }
+
     # ── Synthesis language ──────────────────────────────────────────────
     synthesis_language: str = Field(default="fr", pattern=r"^(fr|en)$")
 

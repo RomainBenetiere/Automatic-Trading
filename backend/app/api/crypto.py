@@ -368,6 +368,8 @@ async def get_crypto_screener(
         signal = "neutral"
         rsi = None
 
+        indicator_signals: dict[str, float] = {}
+
         if with_scores:
             try:
                 candles = client.get_candles(
@@ -378,12 +380,22 @@ async def get_crypto_screener(
                     regime = classify_volatility(df)
                     params = get_params(regime)
                     df = compute_indicators(df, params)
-                    raw_tech, _ = score_technical(df)
+                    raw_tech, signals_detail = score_technical(df, weights=settings.technical_weights)
                     comp = compute_composite(
                         raw_tech, 50.0, 50.0, asset_type="crypto", weight_override=(1.0, 0.0, 0.0)
                     )
                     tech_score = comp.composite_score
                     signal = comp.signal
+                    indicator_signals = {
+                        "sma_cross": signals_detail.trend_sma_cross,
+                        "ema_cross": signals_detail.trend_ema_cross,
+                        "macd": signals_detail.trend_macd,
+                        "rsi": signals_detail.momentum_rsi,
+                        "roc": signals_detail.momentum_roc,
+                        "stochastic": signals_detail.momentum_stochastic,
+                        "bollinger": signals_detail.volatility_bollinger,
+                        "obv": signals_detail.volume_obv_trend,
+                    }
                     if "rsi" in df.columns and len(df["rsi"].dropna()) > 0:
                         rsi = round(float(df["rsi"].iloc[-1]), 1)
             except Exception as e:
@@ -396,6 +408,7 @@ async def get_crypto_screener(
             "technical_score": tech_score,
             "signal": signal,
             "rsi": rsi,
+            "indicator_signals": indicator_signals,
         }
 
     # Parallelize candle fetching and scoring across worker threads
@@ -407,6 +420,7 @@ async def get_crypto_screener(
         "timestamp": datetime.utcnow().isoformat(),
         "candle_interval": settings.crypto_candle_interval,
         "current_basket": settings.crypto_basket_list,
+        "technical_weights": settings.technical_weights,
         "count": len(analyzed),
         "markets": list(analyzed),
     }

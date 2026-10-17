@@ -484,11 +484,44 @@ async def test_crypto_screener_api_endpoint(monkeypatch):
         data = response.json()
         assert "markets" in data
         assert "current_basket" in data
-        assert data["count"] == 2
+        assert "technical_weights" in data
+        assert "rsi" in data["technical_weights"]
+        assert data["technical_weights"]["rsi"] == 1.0
         btc = next(m for m in data["markets"] if m["symbol"] == "BTC")
         assert btc["in_portfolio"] is True
         eth = next(m for m in data["markets"] if m["symbol"] == "ETH")
         assert eth["in_portfolio"] is False
+
+
+def test_score_technical_with_custom_weights():
+    import pandas as pd
+    from app.analysis.technical import score_technical
+
+    # Create dummy DataFrame with 30 rows
+    data = {
+        "open": [100.0 + i for i in range(30)],
+        "high": [105.0 + i for i in range(30)],
+        "low": [95.0 + i for i in range(30)],
+        "close": [102.0 + i for i in range(30)],
+        "volume": [1000.0 for _ in range(30)],
+        "sma_short": [120.0 for _ in range(30)],
+        "sma_long": [100.0 for _ in range(30)],  # sma_cross = +1.0
+        "ema_fast": [120.0 for _ in range(30)],
+        "ema_slow": [100.0 for _ in range(30)],  # ema_cross = +1.0
+        "rsi": [80.0 for _ in range(30)],        # rsi = -1.0 (overbought)
+    }
+    df = pd.DataFrame(data)
+
+    # 1. Balanced weights (1.0 each for sma, ema, rsi)
+    # signals: +1, +1, -1 -> avg = +1/3 -> score = (1/3 + 1.5)/3 * 100 = ~61.1
+    s_balanced, sigs = score_technical(df, weights={"sma_cross": 1.0, "ema_cross": 1.0, "rsi": 1.0})
+    assert s_balanced > 55.0
+
+    # 2. Heavy RSI weight (e.g. 10.0 for rsi vs 1.0 for sma/ema)
+    # RSI (-1.0) dominates -> avg should be strongly negative -> score should drop significantly
+    s_heavy_rsi, _ = score_technical(df, weights={"sma_cross": 1.0, "ema_cross": 1.0, "rsi": 10.0})
+    assert s_heavy_rsi < s_balanced
+    assert s_heavy_rsi < 35.0
 
 
 

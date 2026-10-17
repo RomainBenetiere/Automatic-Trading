@@ -1,10 +1,21 @@
 import { useState, useCallback, useMemo } from 'react'
 import {
   Compass, TrendingUp, TrendingDown, RefreshCw, Copy, Check,
-  Sliders, ShoppingBag, ShieldCheck, Wallet, Sparkles, Filter, Search
+  Sliders, ShoppingBag, Sparkles, Filter, Search, Eye, EyeOff
 } from 'lucide-react'
 import { crypto } from '../api/client'
 import { usePolling } from '../hooks/usePolling'
+
+const INDICATOR_CONFIG = [
+  { key: 'sma_cross', label: 'SMA Cross', shortLabel: 'SMA', fullName: 'SMA Cross (Rapide/Lente)', envKey: 'TECH_WEIGHT_SMA_CROSS' },
+  { key: 'ema_cross', label: 'EMA Cross', shortLabel: 'EMA', fullName: 'EMA Cross (Rapide/Lente)', envKey: 'TECH_WEIGHT_EMA_CROSS' },
+  { key: 'macd', label: 'MACD', shortLabel: 'MACD', fullName: 'MACD (Ligne/Signal & Croisement)', envKey: 'TECH_WEIGHT_MACD' },
+  { key: 'rsi', label: 'RSI', shortLabel: 'RSI', fullName: 'RSI Momentum (Survente <30 / Surachat >70)', envKey: 'TECH_WEIGHT_RSI' },
+  { key: 'roc', label: 'ROC', shortLabel: 'ROC', fullName: 'Rate of Change (Accélération)', envKey: 'TECH_WEIGHT_ROC' },
+  { key: 'stochastic', label: 'Stochastique', shortLabel: 'Stoch', fullName: 'Stochastique (%K / %D)', envKey: 'TECH_WEIGHT_STOCHASTIC' },
+  { key: 'bollinger', label: 'Bollinger', shortLabel: 'Boll', fullName: 'Bandes de Bollinger (Position)', envKey: 'TECH_WEIGHT_BOLLINGER' },
+  { key: 'obv', label: 'OBV', shortLabel: 'OBV', fullName: 'On-Balance Volume (Pente 10 bougies)', envKey: 'TECH_WEIGHT_OBV' },
+]
 
 function formatEur(val) {
   if (val == null) return '—'
@@ -27,13 +38,68 @@ function SignalBadge({ signal }) {
   return <span className={`badge badge-${signal}`}>{label}</span>
 }
 
+function AmplitudeBadge({ value, indicatorName, weight = 1.0 }) {
+  if (value == null) return <span className="text-muted" style={{ fontSize: '0.75rem' }}>—</span>
+
+  let bg = 'rgba(148, 163, 184, 0.1)'
+  let color = 'var(--text-muted)'
+  let border = '1px solid transparent'
+
+  if (value >= 1.5) {
+    bg = 'rgba(16, 185, 129, 0.25)'
+    color = '#34d399'
+    border = '1px solid rgba(16, 185, 129, 0.5)'
+  } else if (value >= 1.0) {
+    bg = 'rgba(16, 185, 129, 0.18)'
+    color = '#10b981'
+  } else if (value > 0) {
+    bg = 'rgba(6, 182, 212, 0.15)'
+    color = '#38bdf8'
+  } else if (value <= -1.5) {
+    bg = 'rgba(244, 63, 94, 0.25)'
+    color = '#fb7185'
+    border = '1px solid rgba(244, 63, 94, 0.5)'
+  } else if (value <= -1.0) {
+    bg = 'rgba(244, 63, 94, 0.18)'
+    color = '#f43f5e'
+  } else if (value < 0) {
+    bg = 'rgba(245, 158, 11, 0.15)'
+    color = '#fbbf24'
+  }
+
+  const sign = value > 0 ? '+' : ''
+  const displayVal = Number.isInteger(value) ? `${sign}${value}.0` : `${sign}${value.toFixed(1)}`
+
+  return (
+    <span
+      title={`${indicatorName || 'Signal'}: amplitude ${displayVal} (Poids .env: ${weight})`}
+      style={{
+        display: 'inline-block',
+        minWidth: 36,
+        textAlign: 'center',
+        padding: '2px 5px',
+        borderRadius: 4,
+        background: bg,
+        color: color,
+        border: border,
+        fontSize: '0.75rem',
+        fontWeight: Math.abs(value) >= 1.0 ? 700 : 500,
+        fontFamily: 'monospace',
+      }}
+    >
+      {displayVal}
+    </span>
+  )
+}
+
 export default function CryptoScreener() {
   const [refreshing, setRefreshing] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterMode, setFilterMode] = useState('all') // 'all', 'bullish', 'basket', 'held', 'candidates'
   const [sortBy, setSortBy] = useState('volume') // 'volume', 'score', 'change', 'rsi'
   const [copied, setCopied] = useState(false)
-  const [selectedMarkets, setSelectedMarkets] = useState(null) // null = initialized once data arrives
+  const [selectedMarkets, setSelectedMarkets] = useState(null)
+  const [showIndicators, setShowIndicators] = useState(true)
 
   const { data, loading, refetch } = usePolling(
     useCallback(() => crypto.getScreener(), []),
@@ -52,7 +118,6 @@ export default function CryptoScreener() {
     }
   }
 
-  // Initialize selected markets with current backend basket once loaded
   const currentBasket = data?.current_basket || []
   const activeSelected = selectedMarkets !== null ? selectedMarkets : new Set(currentBasket)
 
@@ -87,6 +152,19 @@ export default function CryptoScreener() {
   const clearSelection = () => {
     setSelectedMarkets(new Set())
   }
+
+  const technicalWeights = data?.technical_weights || {
+    sma_cross: 1.0,
+    ema_cross: 1.0,
+    macd: 1.0,
+    rsi: 1.0,
+    roc: 1.0,
+    stochastic: 1.0,
+    bollinger: 1.0,
+    obv: 1.0,
+  }
+
+  const totalWeight = Object.values(technicalWeights).reduce((a, b) => a + Number(b), 0)
 
   // Filtered and sorted markets
   const markets = useMemo(() => {
@@ -225,6 +303,72 @@ export default function CryptoScreener() {
             </span>
             <span className="metric-sub">{stats.topGainer?.symbol || '—'}</span>
           </div>
+        </div>
+      </div>
+
+      {/* Technical Weights Indicator Bar */}
+      <div
+        className="card"
+        style={{
+          marginBottom: 'var(--space-lg)',
+          padding: '16px 20px',
+          border: '1px solid var(--border-subtle)',
+          background: 'rgba(17, 24, 39, 0.65)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Sliders size={18} style={{ color: 'var(--accent-primary)' }} />
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 600, margin: 0 }}>
+                Pondération des 8 Indicateurs Techniques (.env)
+              </h2>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4 }}>
+              Poids appliqués pour le calcul du Score Technique (0–100). Modifiables dans <code>.env</code> via <code>TECH_WEIGHT_*</code>.
+            </p>
+          </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => setShowIndicators(!showIndicators)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            {showIndicators ? <EyeOff size={15} /> : <Eye size={15} />}
+            {showIndicators ? 'Masquer colonnes indicateurs' : 'Afficher colonnes indicateurs'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+          {INDICATOR_CONFIG.map(({ key, shortLabel, fullName, envKey }) => {
+            const weight = Number(technicalWeights[key] ?? 1.0)
+            const pct = totalWeight > 0 ? ((weight / totalWeight) * 100).toFixed(1) : '12.5'
+            return (
+              <div
+                key={key}
+                style={{
+                  background: 'rgba(10, 14, 26, 0.7)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+                title={`${fullName}\nVariable .env: ${envKey}=${weight}`}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.775rem', fontWeight: 700, color: 'var(--text-primary)' }}>{shortLabel}</span>
+                  <span style={{ fontSize: '0.725rem', color: 'var(--accent-primary)', fontWeight: 600 }}>{pct}%</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                  <span style={{ fontSize: '0.675rem', color: 'var(--text-muted)' }}>Poids</span>
+                  <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#38bdf8', fontWeight: 600 }}>
+                    {weight.toFixed(1)}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -420,22 +564,34 @@ export default function CryptoScreener() {
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: 44, textAlign: 'center' }}>Sélec.</th>
-                <th style={{ width: 50 }}>#</th>
+                <th style={{ width: 40, textAlign: 'center' }}>Sélec.</th>
+                <th style={{ width: 44 }}>#</th>
                 <th>Actif</th>
                 <th style={{ textAlign: 'right' }}>Prix</th>
                 <th style={{ textAlign: 'right' }}>Var 24h</th>
-                <th style={{ textAlign: 'right' }}>Volume 24h (€)</th>
-                <th style={{ textAlign: 'center' }}>RSI (4H)</th>
-                <th style={{ textAlign: 'center' }}>Score Technique</th>
+                <th style={{ textAlign: 'right' }}>Volume 24h</th>
+                <th style={{ textAlign: 'center' }}>RSI 4H</th>
+                <th style={{ textAlign: 'center' }}>Score Tech</th>
                 <th style={{ textAlign: 'center' }}>Signal</th>
+                {showIndicators && (
+                  <>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="SMA Cross (Poids: {technicalWeights.sma_cross})">SMA</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="EMA Cross (Poids: {technicalWeights.ema_cross})">EMA</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="MACD (Poids: {technicalWeights.macd})">MACD</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="RSI (Poids: {technicalWeights.rsi})">RSI</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="ROC (Poids: {technicalWeights.roc})">ROC</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="Stochastique (Poids: {technicalWeights.stochastic})">Stoch</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="Bollinger (Poids: {technicalWeights.bollinger})">Boll</th>
+                    <th style={{ textAlign: 'center', background: 'rgba(6, 182, 212, 0.08)' }} title="OBV (Poids: {technicalWeights.obv})">OBV</th>
+                  </>
+                )}
                 <th style={{ textAlign: 'center' }}>Statut</th>
               </tr>
             </thead>
             <tbody>
               {loading && !data && (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', padding: 'var(--space-2xl)' }}>
+                  <td colSpan={showIndicators ? 18 : 10} style={{ textAlign: 'center', padding: 'var(--space-2xl)' }}>
                     <RefreshCw size={24} className="spin" style={{ color: 'var(--accent-primary)', marginBottom: 8 }} />
                     <p style={{ color: 'var(--text-muted)' }}>Chargement et analyse des marchés Bitvavo en cours…</p>
                   </td>
@@ -444,7 +600,7 @@ export default function CryptoScreener() {
 
               {markets.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--text-muted)' }}>
+                  <td colSpan={showIndicators ? 18 : 10} style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--text-muted)' }}>
                     Aucun actif ne correspond aux critères de filtre.
                   </td>
                 </tr>
@@ -452,8 +608,8 @@ export default function CryptoScreener() {
 
               {markets.map((m, idx) => {
                 const isSelected = activeSelected.has(m.market)
-                const isBullish = m.signal === 'strong_buy' || m.signal === 'buy'
                 const isPositive = (m.change_24h_pct || 0) >= 0
+                const sigs = m.indicator_signals || {}
 
                 return (
                   <tr
@@ -508,7 +664,7 @@ export default function CryptoScreener() {
                       {formatEur(m.volume_eur)}
                     </td>
 
-                    {/* RSI */}
+                    {/* RSI (valeur brute) */}
                     <td style={{ textAlign: 'center' }}>
                       {m.rsi != null ? (
                         <span
@@ -541,10 +697,10 @@ export default function CryptoScreener() {
                     {/* Technical Score */}
                     <td style={{ textAlign: 'center' }}>
                       {m.technical_score != null ? (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                           <div
                             style={{
-                              width: 50,
+                              width: 44,
                               height: 6,
                               borderRadius: 3,
                               background: 'rgba(255, 255, 255, 0.1)',
@@ -577,6 +733,36 @@ export default function CryptoScreener() {
                     <td style={{ textAlign: 'center' }}>
                       <SignalBadge signal={m.signal} />
                     </td>
+
+                    {/* 8 Technical Indicator Amplitudes */}
+                    {showIndicators && (
+                      <>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.sma_cross} indicatorName="SMA Cross" weight={technicalWeights.sma_cross} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.ema_cross} indicatorName="EMA Cross" weight={technicalWeights.ema_cross} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.macd} indicatorName="MACD" weight={technicalWeights.macd} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.rsi} indicatorName="RSI" weight={technicalWeights.rsi} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.roc} indicatorName="ROC" weight={technicalWeights.roc} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.stochastic} indicatorName="Stochastique" weight={technicalWeights.stochastic} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.bollinger} indicatorName="Bollinger" weight={technicalWeights.bollinger} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <AmplitudeBadge value={sigs.obv} indicatorName="OBV" weight={technicalWeights.obv} />
+                        </td>
+                      </>
+                    )}
 
                     {/* Status */}
                     <td style={{ textAlign: 'center' }}>

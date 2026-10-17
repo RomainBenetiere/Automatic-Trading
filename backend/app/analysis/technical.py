@@ -234,8 +234,15 @@ class TechnicalSignals:
     signals: dict = field(default_factory=dict)
 
 
-def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
+def score_technical(
+    df: pd.DataFrame,
+    weights: dict[str, float] | None = None,
+) -> tuple[float, TechnicalSignals]:
     """Compute a normalised technical score (0–100) from the latest indicator values.
+
+    Args:
+        df: DataFrame with computed indicators.
+        weights: Optional dict of indicator weights (from settings.technical_weights).
 
     Returns (score, signals_detail).
     """
@@ -246,23 +253,17 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
     prev = df.iloc[-2]
     signals = TechnicalSignals()
 
-    signal_values: list[float] = []
+    evaluated: dict[str, float] = {}
 
     # ── Trend: SMA cross ───────────────────────────────────────────
     if pd.notna(latest.get("sma_short")) and pd.notna(latest.get("sma_long")):
-        if latest["sma_short"] > latest["sma_long"]:
-            signals.trend_sma_cross = 1.0
-        else:
-            signals.trend_sma_cross = -1.0
-        signal_values.append(signals.trend_sma_cross)
+        signals.trend_sma_cross = 1.0 if latest["sma_short"] > latest["sma_long"] else -1.0
+        evaluated["sma_cross"] = signals.trend_sma_cross
 
     # ── Trend: EMA cross ───────────────────────────────────────────
     if pd.notna(latest.get("ema_fast")) and pd.notna(latest.get("ema_slow")):
-        if latest["ema_fast"] > latest["ema_slow"]:
-            signals.trend_ema_cross = 1.0
-        else:
-            signals.trend_ema_cross = -1.0
-        signal_values.append(signals.trend_ema_cross)
+        signals.trend_ema_cross = 1.0 if latest["ema_fast"] > latest["ema_slow"] else -1.0
+        evaluated["ema_cross"] = signals.trend_ema_cross
 
     # ── Trend: MACD ────────────────────────────────────────────────
     if pd.notna(latest.get("macd")) and pd.notna(latest.get("macd_signal")):
@@ -276,7 +277,7 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
                 signals.trend_macd = 1.5  # Bullish crossover bonus
             elif prev["macd"] >= prev["macd_signal"] and latest["macd"] < latest["macd_signal"]:
                 signals.trend_macd = -1.5  # Bearish crossover penalty
-        signal_values.append(signals.trend_macd)
+        evaluated["macd"] = signals.trend_macd
 
     # ── Momentum: RSI ──────────────────────────────────────────────
     rsi = latest.get("rsi")
@@ -291,7 +292,7 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
             signals.momentum_rsi = -0.5
         else:
             signals.momentum_rsi = 0.0
-        signal_values.append(signals.momentum_rsi)
+        evaluated["rsi"] = signals.momentum_rsi
 
     # ── Momentum: ROC ──────────────────────────────────────────────
     roc = latest.get("roc")
@@ -304,7 +305,7 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
             signals.momentum_roc = -1.0
         elif roc < 0:
             signals.momentum_roc = -0.5
-        signal_values.append(signals.momentum_roc)
+        evaluated["roc"] = signals.momentum_roc
 
     # ── Momentum: Stochastic ───────────────────────────────────────
     stoch_k = latest.get("stochastic_k")
@@ -318,7 +319,7 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
             signals.momentum_stochastic = 0.3
         else:
             signals.momentum_stochastic = -0.3
-        signal_values.append(signals.momentum_stochastic)
+        evaluated["stochastic"] = signals.momentum_stochastic
 
     # ── Volatility: Bollinger position ─────────────────────────────
     close = latest.get("close")
@@ -335,25 +336,35 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
                 signals.volatility_bollinger = -1.0  # Near upper band → bearish
             else:
                 signals.volatility_bollinger = 0.0
-            signal_values.append(signals.volatility_bollinger)
+            evaluated["bollinger"] = signals.volatility_bollinger
 
     # ── Volume: OBV trend ──────────────────────────────────────────
     if len(df) >= 10 and pd.notna(latest.get("obv")):
         obv_series = df["obv"].dropna().iloc[-10:]
         if len(obv_series) >= 5:
             obv_slope = np.polyfit(range(len(obv_series)), obv_series.values, 1)[0]
-            if obv_slope > 0:
-                signals.volume_obv_trend = 0.5  # Rising volume confirms trend
-            else:
-                signals.volume_obv_trend = -0.5
-            signal_values.append(signals.volume_obv_trend)
+            signals.volume_obv_trend = 0.5 if obv_slope > 0 else -0.5
+            evaluated["obv"] = signals.volume_obv_trend
 
     # ── Aggregate score ────────────────────────────────────────────
-    if not signal_values:
+    if not evaluated:
         return 50.0, signals
 
-    # Average of all signals (range: roughly -1.5 to +1.5)
-    avg_signal = np.mean(signal_values)
+    if weights is None:
+        from app.config import settings
+        weights = settings.technical_weights
+
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for k, v in evaluated.items():
+        w = max(0.0, float(weights.get(k, 1.0)))
+        weighted_sum += v * w
+        total_weight += w
+
+    if total_weight > 0:
+        avg_signal = weighted_sum / total_weight
+    else:
+        avg_signal = float(np.mean(list(evaluated.values())))
 
     # Map from [-1.5, +1.5] to [0, 100]
     score = max(0.0, min(100.0, (avg_signal + 1.5) / 3.0 * 100.0))
@@ -366,6 +377,7 @@ def score_technical(df: pd.DataFrame) -> tuple[float, TechnicalSignals]:
         "roc": signals.momentum_roc,
         "stochastic": signals.momentum_stochastic,
         "bollinger": signals.volatility_bollinger,
+        "obv": signals.volume_obv_trend,
         "obv_trend": signals.volume_obv_trend,
         "avg_signal": float(avg_signal),
     }
