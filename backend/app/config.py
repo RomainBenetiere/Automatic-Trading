@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     # ── Database ────────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./data/trading.db"
 
-    # ── Crypto guardrails ───────────────────────────────────────────────
+    # ── Crypto guardrails & sizing ──────────────────────────────────────
+    crypto_buy_pct: float = Field(default=3.0, ge=0.1, le=100.0)
+    crypto_strong_buy_pct: float = Field(default=5.0, ge=0.1, le=100.0)
     crypto_per_trade_cap_pct: float = Field(default=5.0, ge=0.1, le=100.0)
     crypto_stop_loss_pct: float = Field(default=5.0, ge=0.1, le=50.0)
     crypto_trailing_stop_pct: float = Field(default=3.0, ge=0.1, le=50.0)

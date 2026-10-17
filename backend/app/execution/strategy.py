@@ -70,11 +70,11 @@ def decide_crypto_action(
                 signals_snapshot=signals_snapshot,
             )
 
-        # Position sizing: proportional to signal confidence
+        # Position sizing: directly from .env configuration
         if signal == "strong_buy":
-            size_pct = min(settings.crypto_per_trade_cap_pct, 5.0)
+            size_pct = settings.crypto_strong_buy_pct
         else:
-            size_pct = min(settings.crypto_per_trade_cap_pct, 3.0)
+            size_pct = settings.crypto_buy_pct
 
         order_value = min(
             portfolio_value_eur * (size_pct / 100),
@@ -86,7 +86,7 @@ def decide_crypto_action(
         min_order = 5.0
         if order_value < min_order:
             max_allowed = min(
-                portfolio_value_eur * settings.crypto_per_trade_cap_pct / 100,
+                portfolio_value_eur * max(settings.crypto_per_trade_cap_pct, size_pct) / 100,
                 available_budget_eur,
             )
             if max_allowed >= min_order:

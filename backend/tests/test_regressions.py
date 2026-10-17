@@ -601,3 +601,20 @@ async def test_crypto_daily_job_multiple_runs_and_stocks_job_preserve_crypto_sco
     scored_symbols = {s.symbol for s in scores_after_stocks}
     for crypto_sym in full_basket.split(","):
         assert crypto_sym in scored_symbols
+
+
+def test_custom_buy_and_strong_buy_pct_from_env(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "crypto_buy_pct", 7.5)
+    monkeypatch.setattr(settings, "crypto_strong_buy_pct", 12.0)
+
+    buy_res = compute_composite(68.0, 50.0, 50.0, "crypto", weight_override=(1.0, 0.0, 0.0))
+    strong_buy_res = compute_composite(80.0, 50.0, 50.0, "crypto", weight_override=(1.0, 0.0, 0.0))
+
+    act_buy = decide_crypto_action("BTC-EUR", buy_res, 0.0, 1000.0, 1000.0, 50000.0)
+    act_strong = decide_crypto_action("BTC-EUR", strong_buy_res, 0.0, 1000.0, 1000.0, 50000.0)
+
+    assert act_buy is not None and act_buy.quote_amount_eur == 75.0
+    assert act_strong is not None and act_strong.quote_amount_eur == 120.0
+

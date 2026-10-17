@@ -49,9 +49,13 @@ class GuardrailChecker:
             )
 
         trade_pct = (order_value_eur / portfolio_value_eur) * 100
-        max_pct = settings.crypto_per_trade_cap_pct
+        max_pct = max(
+            settings.crypto_per_trade_cap_pct,
+            settings.crypto_buy_pct,
+            settings.crypto_strong_buy_pct,
+        )
 
-        passed = trade_pct <= max_pct
+        passed = trade_pct <= max_pct + 1e-6
         result = GuardrailCheck(
             passed=passed,
             guardrail="per_trade_cap",
