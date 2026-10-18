@@ -63,6 +63,28 @@ class Settings(BaseSettings):
     crypto_buy_cooldown_days: float = Field(default=3.0, ge=0.0, le=30.0)
     crypto_max_allocation_pct: float = Field(default=20.0, ge=1.0, le=100.0)
 
+    @field_validator(
+        "crypto_buy_pct",
+        "crypto_strong_buy_pct",
+        "crypto_per_trade_cap_pct",
+        "crypto_stop_loss_pct",
+        "crypto_trailing_stop_pct",
+        "crypto_take_profit_pct",
+        "crypto_circuit_breaker_cumulative_loss_pct",
+        "crypto_global_budget_eur",
+        "crypto_buy_cooldown_days",
+        "crypto_max_allocation_pct",
+        mode="before",
+    )
+    @classmethod
+    def sanitize_float_env(cls, v):
+        if isinstance(v, str):
+            cleaned = v.strip().rstrip("%").replace(",", ".").strip()
+            if cleaned == "":
+                return 3.0
+            return float(cleaned)
+        return v
+
     # ── Crypto basket ───────────────────────────────────────────────────
     crypto_basket: str = "BTC-EUR,ETH-EUR,SOL-EUR,XRP-EUR,ADA-EUR"
 
