@@ -10,6 +10,7 @@ export default function Optimizer() {
   const [triggering, setTriggering] = useState(false)
   const [triggerStatus, setTriggerStatus] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [historySymbol, setHistorySymbol] = useState('ALL')
 
   const { data, loading, error, refetch } = usePolling(
     useCallback(() => config.getIndicators(), []),
@@ -40,6 +41,10 @@ export default function Optimizer() {
     return data?.optimized || []
   }, [data])
 
+  const historyList = useMemo(() => {
+    return data?.history || []
+  }, [data])
+
   const filteredList = useMemo(() => {
     if (!searchQuery.trim()) return optimizedList
     const q = searchQuery.toLowerCase().trim()
@@ -47,6 +52,20 @@ export default function Optimizer() {
       item.symbol.toLowerCase().includes(q) || (item.name && item.name.toLowerCase().includes(q))
     )
   }, [optimizedList, searchQuery])
+
+  const filteredHistory = useMemo(() => {
+    let list = historyList
+    if (historySymbol !== 'ALL') {
+      list = list.filter((h) => h.symbol === historySymbol)
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim()
+      list = list.filter(
+        (h) => h.symbol.toLowerCase().includes(q) || (h.name && h.name.toLowerCase().includes(q))
+      )
+    }
+    return list
+  }, [historyList, historySymbol, searchQuery])
 
   // Summary KPIs
   const stats = useMemo(() => {
@@ -538,6 +557,171 @@ export default function Optimizer() {
                           style={{ textAlign: 'right', fontWeight: 700 }}
                         >
                           {item.oos_return != null ? `${(item.oos_return * 100).toFixed(1)}%` : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Dedicated Section: 3-Month (90-Day) History of Windows & Weights */}
+      <div className="section" style={{ marginTop: 32 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 12 }}>
+          <div className="section-title" style={{ margin: 0 }}>
+            <Clock size={20} style={{ color: 'var(--color-hold)' }} />
+            Historique sur 3 Mois — Fenêtres & Pondérations ({filteredHistory.length})
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Actif :</span>
+            <select
+              value={historySymbol}
+              onChange={(e) => setHistorySymbol(e.target.value)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+              }}
+            >
+              <option value="ALL">Tous les actifs ({historyList.length})</option>
+              {optimizedList.map((item) => (
+                <option key={item.symbol} value={item.symbol}>
+                  {item.symbol} {item.name && item.name !== item.symbol ? `— ${item.name}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {filteredHistory.length === 0 ? (
+            <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              Aucun historique enregistré sur les 90 derniers jours pour ce filtre.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto', maxHeight: 480 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Date d'Exécution</th>
+                    <th>Actif</th>
+                    <th>Fenêtres (EMA / RSI / MACD)</th>
+                    <th>Pondérations (SMA, EMA, MACD, RSI, ROC, Stoch, Boll, OBV)</th>
+                    <th style={{ textAlign: 'right' }}>Sharpe OOS</th>
+                    <th style={{ textAlign: 'right' }}>Rendement OOS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredHistory.map((h) => {
+                    const p = h.parameters || {}
+                    const w = p.weights || null
+                    const weightLabels = [
+                      ['sma_cross', 'SMA'],
+                      ['ema_cross', 'EMA'],
+                      ['macd', 'MACD'],
+                      ['rsi', 'RSI'],
+                      ['roc', 'ROC'],
+                      ['stochastic', 'Stoch'],
+                      ['bollinger', 'Boll'],
+                      ['obv', 'OBV'],
+                    ]
+                    return (
+                      <tr key={`hist-${h.id}`}>
+                        <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          {formatDate(h.recorded_at)}
+                        </td>
+                        <td style={{ fontWeight: 600 }}>
+                          <div style={{ color: 'var(--text-primary)', fontSize: '0.85rem' }}>
+                            {h.name && h.name !== h.symbol ? h.name : h.symbol}
+                          </div>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              marginTop: 2,
+                              background: 'var(--accent-primary-dim)',
+                              color: 'var(--accent-primary)',
+                              padding: '1px 6px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontFamily: 'monospace',
+                              fontSize: '0.7rem',
+                            }}
+                          >
+                            {h.symbol}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.82rem', fontFamily: 'monospace' }}>
+                          <span style={{ marginRight: 10 }}>
+                            EMA: <strong>{p.ema_fast ?? '—'}/{p.ema_slow ?? '—'}</strong>
+                          </span>
+                          <span style={{ marginRight: 10 }}>
+                            RSI: <strong>{p.rsi_window ?? '—'}</strong>
+                          </span>
+                          <span>
+                            MACD: <strong>{p.macd_fast ?? '—'}/{p.macd_slow ?? '—'}/{p.macd_signal ?? '—'}</strong>
+                          </span>
+                        </td>
+                        <td>
+                          {w ? (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              {weightLabels.map(([key, label]) => {
+                                const val = Number(w[key] ?? 1.0)
+                                const isStrong = val >= 2.0
+                                const isBoosted = val > 1.0 && val < 2.0
+                                const isZero = val === 0
+                                return (
+                                  <span
+                                    key={key}
+                                    style={{
+                                      fontSize: '0.7rem',
+                                      padding: '2px 6px',
+                                      borderRadius: 4,
+                                      fontFamily: 'monospace',
+                                      opacity: isZero ? 0.45 : 1,
+                                      background: isStrong
+                                        ? 'rgba(16, 185, 129, 0.16)'
+                                        : isBoosted
+                                        ? 'rgba(6, 182, 212, 0.16)'
+                                        : 'rgba(148, 163, 184, 0.12)',
+                                      color: isStrong
+                                        ? 'var(--color-buy)'
+                                        : isBoosted
+                                        ? 'var(--accent-primary)'
+                                        : 'var(--text-secondary)',
+                                    }}
+                                  >
+                                    {label}:×{val.toFixed(1)}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                              Uniforme (×1.0)
+                            </span>
+                          )}
+                        </td>
+                        <td
+                          className={`cell-number ${
+                            h.oos_sharpe >= 1.0 ? 'cell-positive' : h.oos_sharpe < 0 ? 'cell-negative' : ''
+                          }`}
+                          style={{ textAlign: 'right' }}
+                        >
+                          {h.oos_sharpe != null ? h.oos_sharpe.toFixed(2) : '—'}
+                        </td>
+                        <td
+                          className={`cell-number ${
+                            h.oos_return > 0 ? 'cell-positive' : h.oos_return < 0 ? 'cell-negative' : ''
+                          }`}
+                          style={{ textAlign: 'right', fontWeight: 700 }}
+                        >
+                          {h.oos_return != null ? `${(h.oos_return * 100).toFixed(1)}%` : '—'}
                         </td>
                       </tr>
                     )

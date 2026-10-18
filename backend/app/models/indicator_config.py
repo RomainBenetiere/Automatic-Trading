@@ -44,3 +44,31 @@ class IndicatorConfig(Base):
             f"<IndicatorConfig {self.symbol}/{self.indicator_name} "
             f"sharpe={self.oos_sharpe}>"
         )
+
+
+class IndicatorConfigHistory(Base):
+    """Historical log of per-symbol indicator windows and weights (retained for 90 days / 3 months)."""
+
+    __tablename__ = "indicator_config_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    indicator_name: Mapped[str] = mapped_column(String(64), nullable=False, default="all")
+
+    # JSON-encoded dict of optimal parameters and indicator weights
+    parameters: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+    oos_sharpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oos_sortino: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oos_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, index=True, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<IndicatorConfigHistory {self.symbol} @ {self.recorded_at} "
+            f"return={self.oos_return} sharpe={self.oos_sharpe}>"
+        )
+

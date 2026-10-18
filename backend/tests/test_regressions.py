@@ -644,3 +644,56 @@ def test_two_stage_optimizer_optimizes_windows_and_weights():
         assert key in weights
         assert 0.0 <= weights[key] <= 3.0
     assert opt.oos_return >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_indicator_config_history_3_months_retention(db, monkeypatch):
+    from contextlib import asynccontextmanager
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.config import settings
+    from app.collectors.bitvavo import BitvavoClient
+    from app.models.indicator_config import IndicatorConfigHistory
+    from app.scheduler import jobs as scheduler_jobs
+
+    @asynccontextmanager
+    async def fake_session():
+        yield db
+
+    monkeypatch.setattr(scheduler_jobs, "async_session", fake_session)
+    monkeypatch.setattr(settings, "crypto_basket", "BTC-EUR")
+
+    # Insert an expired history entry (100 days old > 90 days)
+    old_entry = IndicatorConfigHistory(
+        symbol="BTC-EUR",
+        indicator_name="all",
+        parameters='{"ema_fast": 12}',
+        oos_sharpe=0.5,
+        oos_sortino=0.5,
+        oos_return=0.01,
+        recorded_at=datetime.utcnow() - timedelta(days=100),
+    )
+    db.add(old_entry)
+    await db.commit()
+
+    now = datetime.utcnow()
+    dummy_candles = [
+        {
+            "datetime": now - timedelta(hours=4 * (80 - i)),
+            "open": 100.0 + i * 0.5,
+            "high": 102.0 + i * 0.5,
+            "low": 98.0 + i * 0.5,
+            "close": 101.0 + i * 0.5,
+            "volume": 1000.0,
+        }
+        for i in range(80)
+    ]
+    monkeypatch.setattr(BitvavoClient, "get_candles", lambda self, market, interval="4h", limit=500: dummy_candles)
+
+    await scheduler_jobs.run_optimizer_weekly_job()
+
+    rows = (await db.execute(select(IndicatorConfigHistory))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].symbol == "BTC-EUR"
+    assert (now - rows[0].recorded_at).total_seconds() < 60
+

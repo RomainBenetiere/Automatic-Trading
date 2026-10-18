@@ -83,3 +83,27 @@ async def init_db() -> None:
                 await conn.execute(
                     text("ALTER TABLE orders ADD COLUMN stop_loss_order_id VARCHAR(128)")
                 )
+
+            # Seed indicator_config_history from existing indicator_config rows if history table is empty
+            hist_count_res = await conn.execute(text("SELECT COUNT(*) FROM indicator_config_history"))
+            hist_count = hist_count_res.scalar() or 0
+            if hist_count == 0:
+                await conn.execute(
+                    text(
+                        """
+                        INSERT INTO indicator_config_history (
+                            symbol, indicator_name, parameters, oos_sharpe, oos_sortino, oos_return, recorded_at
+                        )
+                        SELECT
+                            symbol,
+                            indicator_name,
+                            parameters,
+                            oos_sharpe,
+                            oos_sortino,
+                            oos_return,
+                            COALESCE(last_optimized_at, updated_at, CURRENT_TIMESTAMP)
+                        FROM indicator_config
+                        """
+                    )
+                )
+

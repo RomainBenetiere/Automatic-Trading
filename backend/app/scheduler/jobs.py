@@ -38,7 +38,7 @@ from app.models.order import Order, OrderSide, OrderStatus
 from app.models.position import AccountType, AssetType, Position
 from app.models.recommendation import ActionType, Recommendation
 from app.models.score import Score
-from app.models.indicator_config import IndicatorConfig
+from app.models.indicator_config import IndicatorConfig, IndicatorConfigHistory
 from app.analysis.optimizer import optimize_parameters
 
 logger = logging.getLogger(__name__)
@@ -688,15 +688,29 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
 
                         opt = optimize_parameters(df, market)
                         if opt.best_params:
+                            now_ts = datetime.utcnow()
+                            params_json = json.dumps(opt.best_params)
                             cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
                             if not cfg:
                                 cfg = IndicatorConfig(symbol=market, indicator_name="all")
                                 db.add(cfg)
-                            cfg.parameters = json.dumps(opt.best_params)
-                            cfg.last_optimized_at = datetime.utcnow()
+                            cfg.parameters = params_json
+                            cfg.last_optimized_at = now_ts
                             cfg.oos_sharpe = opt.oos_sharpe
                             cfg.oos_sortino = opt.oos_sortino
                             cfg.oos_return = opt.oos_return
+
+                            db.add(
+                                IndicatorConfigHistory(
+                                    symbol=market,
+                                    indicator_name="all",
+                                    parameters=params_json,
+                                    oos_sharpe=opt.oos_sharpe,
+                                    oos_sortino=opt.oos_sortino,
+                                    oos_return=opt.oos_return,
+                                    recorded_at=now_ts,
+                                )
+                            )
                             await db.commit()
 
                             results["optimizations"].append({
@@ -729,15 +743,29 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
 
                         opt = optimize_parameters(df, symbol)
                         if opt.best_params:
+                            now_ts = datetime.utcnow()
+                            params_json = json.dumps(opt.best_params)
                             cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
                             if not cfg:
                                 cfg = IndicatorConfig(symbol=symbol, indicator_name="all")
                                 db.add(cfg)
-                            cfg.parameters = json.dumps(opt.best_params)
-                            cfg.last_optimized_at = datetime.utcnow()
+                            cfg.parameters = params_json
+                            cfg.last_optimized_at = now_ts
                             cfg.oos_sharpe = opt.oos_sharpe
                             cfg.oos_sortino = opt.oos_sortino
                             cfg.oos_return = opt.oos_return
+
+                            db.add(
+                                IndicatorConfigHistory(
+                                    symbol=symbol,
+                                    indicator_name="all",
+                                    parameters=params_json,
+                                    oos_sharpe=opt.oos_sharpe,
+                                    oos_sortino=opt.oos_sortino,
+                                    oos_return=opt.oos_return,
+                                    recorded_at=now_ts,
+                                )
+                            )
                             await db.commit()
 
                             results["optimizations"].append({
@@ -749,6 +777,13 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                     except Exception as e:
                         await db.rollback()
                         logger.exception("Error optimizing %s: %s", symbol, e)
+
+                # 3. Prune indicator history older than 3 months (90 days)
+                cutoff_90d = datetime.utcnow() - timedelta(days=90)
+                await db.execute(
+                    delete(IndicatorConfigHistory).where(IndicatorConfigHistory.recorded_at < cutoff_90d)
+                )
+                await db.commit()
 
             except Exception as e:
                 logger.exception("Optimizer weekly job error: %s", e)

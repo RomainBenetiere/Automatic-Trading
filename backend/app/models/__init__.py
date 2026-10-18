@@ -2,7 +2,7 @@
 
 from app.models.position import Position
 from app.models.market_data import MarketData
-from app.models.indicator_config import IndicatorConfig
+from app.models.indicator_config import IndicatorConfig, IndicatorConfigHistory
 from app.models.score import Score
 from app.models.recommendation import Recommendation
 from app.models.order import Order
@@ -12,6 +12,7 @@ __all__ = [
     "Position",
     "MarketData",
     "IndicatorConfig",
+    "IndicatorConfigHistory",
     "Score",
     "Recommendation",
     "Order",
