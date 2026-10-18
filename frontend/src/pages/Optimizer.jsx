@@ -263,7 +263,6 @@ export default function Optimizer() {
                     <th>RSI Fenêtre</th>
                     <th>MACD (Fast / Slow / Sig)</th>
                     <th>Bollinger</th>
-                    <th>Poids Indicateurs Optimisés</th>
                     <th>Sharpe OOS</th>
                     <th>Sortino OOS</th>
                     <th>Rendement OOS</th>
@@ -273,17 +272,6 @@ export default function Optimizer() {
                 <tbody>
                   {filteredList.map((item) => {
                     const p = item.parameters || {}
-                    const w = p.weights || null
-                    const weightLabels = [
-                      ['sma_cross', 'SMA'],
-                      ['ema_cross', 'EMA'],
-                      ['macd', 'MACD'],
-                      ['rsi', 'RSI'],
-                      ['roc', 'ROC'],
-                      ['stochastic', 'Stoch'],
-                      ['bollinger', 'Boll'],
-                      ['obv', 'OBV'],
-                    ]
                     const sharpe = item.oos_sharpe
                     const sharpeClass =
                       sharpe == null
@@ -359,42 +347,6 @@ export default function Optimizer() {
                             <span style={{ color: 'var(--text-muted)' }}>Défaut</span>
                           )}
                         </td>
-                        <td>
-                          {w ? (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 260 }}>
-                              {weightLabels.map(([key, label]) => {
-                                const val = w[key] != null ? Number(w[key]) : 1.0
-                                const isHigh = val > 1.0
-                                const isZero = val === 0
-                                return (
-                                  <span
-                                    key={key}
-                                    style={{
-                                      fontSize: '0.7rem',
-                                      padding: '2px 5px',
-                                      borderRadius: 4,
-                                      fontFamily: 'monospace',
-                                      opacity: isZero ? 0.45 : 1,
-                                      background: isHigh
-                                        ? 'rgba(6, 182, 212, 0.16)'
-                                        : 'rgba(148, 163, 184, 0.12)',
-                                      color: isHigh
-                                        ? 'var(--accent-primary)'
-                                        : 'var(--text-secondary)',
-                                      border: isHigh
-                                        ? '1px solid rgba(6, 182, 212, 0.35)'
-                                        : '1px solid transparent',
-                                    }}
-                                  >
-                                    {label}:{val}
-                                  </span>
-                                )
-                              })}
-                            </div>
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)' }}>Uniforme (1.0)</span>
-                          )}
-                        </td>
                         <td className={`cell-number ${sharpeClass}`}>
                           {sharpe != null ? sharpe.toFixed(2) : '—'}
                         </td>
@@ -406,6 +358,186 @@ export default function Optimizer() {
                         </td>
                         <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                           {formatDate(item.last_optimized_at || item.updated_at)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Dedicated Section: Indicator Weights per Asset */}
+      <div className="section" style={{ marginTop: 32 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 12 }}>
+          <div className="section-title" style={{ margin: 0 }}>
+            <Sliders size={20} style={{ color: 'var(--accent-secondary)' }} />
+            Poids des Indicateurs Techniques par Actif (Étape 2)
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            Pondération optimisée pour maximiser le rendement hors-échantillon (OOS) • Échelle : <code>0.0</code> (ignoré) à <code>3.0</code> (fort)
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {filteredList.length === 0 ? (
+            <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              Aucun actif à afficher. Lancez l'optimiseur pour calculer les pondérations par actif.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Actif</th>
+                    <th style={{ textAlign: 'center' }}>SMA Cross</th>
+                    <th style={{ textAlign: 'center' }}>EMA Cross</th>
+                    <th style={{ textAlign: 'center' }}>MACD</th>
+                    <th style={{ textAlign: 'center' }}>RSI</th>
+                    <th style={{ textAlign: 'center' }}>ROC</th>
+                    <th style={{ textAlign: 'center' }}>Stochastique</th>
+                    <th style={{ textAlign: 'center' }}>Bollinger</th>
+                    <th style={{ textAlign: 'center' }}>OBV</th>
+                    <th style={{ textAlign: 'center' }}>Mode</th>
+                    <th style={{ textAlign: 'right' }}>Rendement OOS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredList.map((item) => {
+                    const p = item.parameters || {}
+                    const hasCustomWeights = Boolean(p.weights)
+                    const defaultW = data?.default_weights || {}
+                    const w = p.weights || defaultW
+                    const keys = [
+                      'sma_cross',
+                      'ema_cross',
+                      'macd',
+                      'rsi',
+                      'roc',
+                      'stochastic',
+                      'bollinger',
+                      'obv',
+                    ]
+                    const totalWeight = keys.reduce(
+                      (acc, k) => acc + Math.max(0, Number(w[k] ?? 1.0)),
+                      0
+                    )
+
+                    const renderWeightCell = (key) => {
+                      const val = Number(w[key] ?? 1.0)
+                      const pct = totalWeight > 0 ? Math.round((val / totalWeight) * 100) : 0
+                      const isStrong = val >= 2.0
+                      const isBoosted = val > 1.0 && val < 2.0
+                      const isReduced = val > 0 && val < 1.0
+                      const isZero = val === 0
+
+                      let bg = 'rgba(148, 163, 184, 0.12)'
+                      let color = 'var(--text-primary)'
+                      let border = '1px solid rgba(148, 163, 184, 0.25)'
+
+                      if (isStrong) {
+                        bg = 'rgba(16, 185, 129, 0.16)'
+                        color = 'var(--color-buy)'
+                        border = '1px solid rgba(16, 185, 129, 0.4)'
+                      } else if (isBoosted) {
+                        bg = 'rgba(6, 182, 212, 0.16)'
+                        color = 'var(--accent-primary)'
+                        border = '1px solid rgba(6, 182, 212, 0.4)'
+                      } else if (isReduced) {
+                        bg = 'rgba(245, 158, 11, 0.12)'
+                        color = 'var(--color-hold)'
+                        border = '1px solid rgba(245, 158, 11, 0.3)'
+                      } else if (isZero) {
+                        bg = 'rgba(100, 116, 139, 0.08)'
+                        color = 'var(--text-muted)'
+                        border = '1px dashed rgba(100, 116, 139, 0.25)'
+                      }
+
+                      return (
+                        <td key={key} style={{ textAlign: 'center' }}>
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              minWidth: 54,
+                              padding: '4px 8px',
+                              borderRadius: 'var(--radius-sm)',
+                              background: bg,
+                              border,
+                              opacity: isZero ? 0.55 : 1,
+                            }}
+                          >
+                            <span style={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '0.85rem', color }}>
+                              ×{val.toFixed(1)}
+                            </span>
+                            <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                              {pct}%
+                            </span>
+                          </div>
+                        </td>
+                      )
+                    }
+
+                    return (
+                      <tr key={`weights-${item.id || item.symbol}`}>
+                        <td style={{ fontWeight: 600 }}>
+                          <div style={{ color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.3 }}>
+                            {item.name && item.name !== item.symbol ? item.name : item.symbol}
+                          </div>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              marginTop: 4,
+                              background: 'var(--accent-primary-dim)',
+                              color: 'var(--accent-primary)',
+                              padding: '2px 6px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontFamily: 'monospace',
+                              fontSize: '0.72rem',
+                            }}
+                          >
+                            {item.symbol}
+                          </span>
+                        </td>
+                        {keys.map((k) => renderWeightCell(k))}
+                        <td style={{ textAlign: 'center' }}>
+                          {hasCustomWeights ? (
+                            <span
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '3px 8px',
+                                borderRadius: 999,
+                                background: 'rgba(16, 185, 129, 0.15)',
+                                color: 'var(--color-buy)',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Optimisé
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '3px 8px',
+                                borderRadius: 999,
+                                background: 'rgba(148, 163, 184, 0.15)',
+                                color: 'var(--text-muted)',
+                              }}
+                            >
+                              Défaut (.env)
+                            </span>
+                          )}
+                        </td>
+                        <td
+                          className={`cell-number ${
+                            item.oos_return > 0 ? 'cell-positive' : item.oos_return < 0 ? 'cell-negative' : ''
+                          }`}
+                          style={{ textAlign: 'right', fontWeight: 700 }}
+                        >
+                          {item.oos_return != null ? `${(item.oos_return * 100).toFixed(1)}%` : '—'}
                         </td>
                       </tr>
                     )

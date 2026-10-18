@@ -113,6 +113,7 @@ async def get_indicator_configs(
 
     return {
         "optimized": optimized,
+        "default_weights": settings.technical_weights,
         "defaults": {
             "high_volatility": asdict(PARAMS_HIGH_VOLATILITY),
             "medium_volatility": asdict(PARAMS_MEDIUM_VOLATILITY),

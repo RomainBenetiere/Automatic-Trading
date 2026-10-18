@@ -477,10 +477,10 @@ def optimize_parameters(
         best_oos_return = 0.0
         best_oos_sharpe = 0.0
 
-    # Improved if OOS return or Sharpe beats default benchmark (and isn't purely negative)
-    improved = (
-        (best_oos_return > default_oos_return or best_oos_sharpe > default_oos_sharpe)
-        and (best_oos_return > 0 or best_oos_sharpe > 0)
+    # Improved if we found valid parameters/weights that beat or match the default benchmark
+    improved = bool(best_params) and (
+        best_oos_return >= default_oos_return - 1e-6
+        or best_oos_sharpe >= default_oos_sharpe - 1e-6
     )
 
     result = OptimizationResult(

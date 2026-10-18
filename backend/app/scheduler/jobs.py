@@ -682,13 +682,13 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                     try:
                         logger.info("Optimizing %s (Crypto)", market)
                         candles = bitvavo.get_candles(market, interval=settings.crypto_candle_interval, limit=500)
-                        if len(candles) < 100:
+                        if len(candles) < 60:
                             continue
                         df = pd.DataFrame(candles).rename(columns={"datetime": "date"}).set_index("date")
 
                         opt = optimize_parameters(df, market)
-                        cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
-                        if opt.improved or (cfg is not None and (cfg.oos_return is None or opt.oos_return > cfg.oos_return)):
+                        if opt.best_params:
+                            cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == market, IndicatorConfig.indicator_name == "all"))
                             if not cfg:
                                 cfg = IndicatorConfig(symbol=market, indicator_name="all")
                                 db.add(cfg)
@@ -701,7 +701,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
 
                             results["optimizations"].append({
                                 "symbol": market,
-                                "improved": True,
+                                "improved": opt.improved,
                                 "oos_sharpe": opt.oos_sharpe,
                                 "oos_return": opt.oos_return,
                             })
@@ -718,7 +718,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                         logger.info("Optimizing %s (Stock/ETF/Bond)", symbol)
                         from_date = date.today() - timedelta(days=1000)  # Get enough history
                         prices = await market_data.get_historical_prices(symbol, from_date=from_date)
-                        if len(prices) < 100:
+                        if len(prices) < 60:
                             continue
                         df = pd.DataFrame(prices)
                         df["date"] = pd.to_datetime(df["date"])
@@ -728,8 +728,8 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                                 df[col] = df.get("adjClose", df.get("close", 0))
 
                         opt = optimize_parameters(df, symbol)
-                        cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
-                        if opt.improved or (cfg is not None and (cfg.oos_return is None or opt.oos_return > cfg.oos_return)):
+                        if opt.best_params:
+                            cfg = await db.scalar(select(IndicatorConfig).where(IndicatorConfig.symbol == symbol, IndicatorConfig.indicator_name == "all"))
                             if not cfg:
                                 cfg = IndicatorConfig(symbol=symbol, indicator_name="all")
                                 db.add(cfg)
@@ -742,7 +742,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
 
                             results["optimizations"].append({
                                 "symbol": symbol,
-                                "improved": True,
+                                "improved": opt.improved,
                                 "oos_sharpe": opt.oos_sharpe,
                                 "oos_return": opt.oos_return,
                             })
