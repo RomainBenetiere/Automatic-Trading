@@ -686,7 +686,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                             continue
                         df = pd.DataFrame(candles).rename(columns={"datetime": "date"}).set_index("date")
 
-                        opt = optimize_parameters(df, market)
+                        opt = await asyncio.to_thread(optimize_parameters, df, market)
                         if opt.best_params:
                             now_ts = datetime.utcnow()
                             params_json = json.dumps(opt.best_params)
@@ -741,7 +741,7 @@ async def run_optimizer_weekly_job() -> dict[str, Any]:
                             if col not in df.columns:
                                 df[col] = df.get("adjClose", df.get("close", 0))
 
-                        opt = optimize_parameters(df, symbol)
+                        opt = await asyncio.to_thread(optimize_parameters, df, symbol)
                         if opt.best_params:
                             now_ts = datetime.utcnow()
                             params_json = json.dumps(opt.best_params)

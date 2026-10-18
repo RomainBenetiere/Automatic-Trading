@@ -61,6 +61,8 @@ async def get_db() -> AsyncSession:  # type: ignore[misc]
 
 async def init_db() -> None:
     """Create all tables and run lightweight schema migrations."""
+    import app.models  # noqa: F401 — register all ORM models on Base.metadata
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -85,25 +87,28 @@ async def init_db() -> None:
                 )
 
             # Seed indicator_config_history from existing indicator_config rows if history table is empty
-            hist_count_res = await conn.execute(text("SELECT COUNT(*) FROM indicator_config_history"))
-            hist_count = hist_count_res.scalar() or 0
-            if hist_count == 0:
-                await conn.execute(
-                    text(
-                        """
-                        INSERT INTO indicator_config_history (
-                            symbol, indicator_name, parameters, oos_sharpe, oos_sortino, oos_return, recorded_at
+            hist_cols = (await conn.execute(text("PRAGMA table_info(indicator_config_history)"))).fetchall()
+            cfg_cols = (await conn.execute(text("PRAGMA table_info(indicator_config)"))).fetchall()
+            if hist_cols and cfg_cols:
+                hist_count_res = await conn.execute(text("SELECT COUNT(*) FROM indicator_config_history"))
+                hist_count = hist_count_res.scalar() or 0
+                if hist_count == 0:
+                    await conn.execute(
+                        text(
+                            """
+                            INSERT INTO indicator_config_history (
+                                symbol, indicator_name, parameters, oos_sharpe, oos_sortino, oos_return, recorded_at
+                            )
+                            SELECT
+                                symbol,
+                                indicator_name,
+                                parameters,
+                                oos_sharpe,
+                                oos_sortino,
+                                oos_return,
+                                COALESCE(last_optimized_at, updated_at, CURRENT_TIMESTAMP)
+                            FROM indicator_config
+                            """
                         )
-                        SELECT
-                            symbol,
-                            indicator_name,
-                            parameters,
-                            oos_sharpe,
-                            oos_sortino,
-                            oos_return,
-                            COALESCE(last_optimized_at, updated_at, CURRENT_TIMESTAMP)
-                        FROM indicator_config
-                        """
                     )
-                )
 

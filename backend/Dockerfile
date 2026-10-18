@@ -21,4 +21,4 @@ RUN mkdir -p /app/data
 EXPOSE 8000
 
 # Run migrations then start server
-CMD ["sh", "-c", "python -c 'from app.database import Base; import asyncio; from app.database import init_db; asyncio.run(init_db())' && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python -c 'import app.models; import asyncio; from app.database import init_db; asyncio.run(init_db())' && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
