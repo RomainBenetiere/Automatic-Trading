@@ -50,18 +50,18 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/trading.db"
 
     # ── Crypto guardrails & sizing ──────────────────────────────────────
-    crypto_buy_pct: float = Field(default=3.0, ge=0.1, le=100.0)
-    crypto_strong_buy_pct: float = Field(default=5.0, ge=0.1, le=100.0)
-    crypto_per_trade_cap_pct: float = Field(default=5.0, ge=0.1, le=100.0)
-    crypto_stop_loss_pct: float = Field(default=5.0, ge=0.1, le=50.0)
-    crypto_trailing_stop_pct: float = Field(default=3.0, ge=0.1, le=50.0)
-    crypto_take_profit_pct: float = Field(default=15.0, ge=1.0, le=500.0)
-    crypto_circuit_breaker_consecutive_losses: int = Field(default=3, ge=1, le=20)
-    crypto_circuit_breaker_cumulative_loss_pct: float = Field(default=15.0, ge=1.0, le=100.0)
-    crypto_circuit_breaker_window_days: int = Field(default=7, ge=1, le=90)
+    crypto_buy_pct: float = Field(default=3.0, ge=0.0)
+    crypto_strong_buy_pct: float = Field(default=5.0, ge=0.0)
+    crypto_per_trade_cap_pct: float = Field(default=5.0, ge=0.0)
+    crypto_stop_loss_pct: float = Field(default=5.0, ge=0.0)
+    crypto_trailing_stop_pct: float = Field(default=3.0, ge=0.0)
+    crypto_take_profit_pct: float = Field(default=15.0, ge=0.0)
+    crypto_circuit_breaker_consecutive_losses: int = Field(default=3, ge=1)
+    crypto_circuit_breaker_cumulative_loss_pct: float = Field(default=15.0, ge=0.1)
+    crypto_circuit_breaker_window_days: int = Field(default=7, ge=1)
     crypto_global_budget_eur: float = Field(default=1000.0, ge=0.0)
-    crypto_buy_cooldown_days: float = Field(default=3.0, ge=0.0, le=30.0)
-    crypto_max_allocation_pct: float = Field(default=20.0, ge=1.0, le=100.0)
+    crypto_buy_cooldown_days: float = Field(default=3.0, ge=0.0)
+    crypto_max_allocation_pct: float = Field(default=20.0, ge=0.1)
 
     @field_validator(
         "crypto_buy_pct",

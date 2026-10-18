@@ -98,7 +98,7 @@ export default function CryptoExecution() {
         <div className="alert-banner alert-danger">
           <ShieldX size={20} />
           <div>
-            <strong>Circuit Breaker Active</strong> — Trading is paused.
+            <strong>Circuit Breaker Active</strong> — New buys are paused (Sells &amp; Stop-Loss remain active).
             {guardrails.circuit_breaker.events?.[0]?.reason &&
               ` Reason: ${guardrails.circuit_breaker.events[0].reason}`
             }

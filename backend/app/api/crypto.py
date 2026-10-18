@@ -184,6 +184,25 @@ async def get_guardrail_status(
         abs(min(0, total_pnl)) / total_invested * 100 if total_invested > 0 else 0
     )
 
+    still_active = []
+    for e in active_breakers:
+        if (
+            e.trigger_reason == "consecutive_losses"
+            and consecutive_losses < settings.crypto_circuit_breaker_consecutive_losses
+            and e.actual_value < settings.crypto_circuit_breaker_consecutive_losses
+        ) or (
+            e.trigger_reason == "cumulative_loss"
+            and cumulative_loss_pct < settings.crypto_circuit_breaker_cumulative_loss_pct
+            and e.actual_value < settings.crypto_circuit_breaker_cumulative_loss_pct
+        ):
+            e.resolved_at = datetime.utcnow()
+            e.resolved_by = "config_threshold_updated"
+        else:
+            still_active.append(e)
+    if len(still_active) != len(active_breakers):
+        await db.commit()
+    active_breakers = still_active
+
     return {
         "circuit_breaker": {
             "active": len(active_breakers) > 0,

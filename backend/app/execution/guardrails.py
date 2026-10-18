@@ -120,6 +120,32 @@ class GuardrailChecker:
         1. N consecutive losing trades
         2. Cumulative loss exceeding threshold over the window period
         """
+        # Check recent orders within the window
+        window_start = datetime.utcnow() - timedelta(
+            days=settings.crypto_circuit_breaker_window_days
+        )
+        stmt_orders = select(Order).where(
+            and_(
+                Order.closed_at >= window_start,
+                Order.realised_pnl.is_not(None),
+            )
+        ).order_by(Order.closed_at.desc())
+        res_orders = await self.db.execute(stmt_orders)
+        recent_orders = res_orders.scalars().all()
+
+        consecutive_losses = 0
+        for order in recent_orders:
+            if order.realised_pnl is not None and order.realised_pnl < 0:
+                consecutive_losses += 1
+            else:
+                break
+
+        total_pnl = sum(o.realised_pnl or 0 for o in recent_orders)
+        total_invested = sum(o.order_value_eur or 0 for o in recent_orders if o.side == OrderSide.BUY)
+        cumulative_loss_pct = (
+            abs(min(0, total_pnl)) / total_invested * 100 if total_invested > 0 else 0
+        )
+
         # First, check for active (unresolved) circuit breaker events
         stmt = select(CircuitBreakerEvent).where(
             CircuitBreakerEvent.resolved_at.is_(None)
@@ -127,8 +153,24 @@ class GuardrailChecker:
         result = await self.db.execute(stmt)
         active_events = result.scalars().all()
 
-        if active_events:
-            event = active_events[0]
+        still_active = []
+        for ev in active_events:
+            if (
+                ev.trigger_reason == "consecutive_losses"
+                and consecutive_losses < settings.crypto_circuit_breaker_consecutive_losses
+                and ev.actual_value < settings.crypto_circuit_breaker_consecutive_losses
+            ) or (
+                ev.trigger_reason == "cumulative_loss"
+                and cumulative_loss_pct < settings.crypto_circuit_breaker_cumulative_loss_pct
+                and ev.actual_value < settings.crypto_circuit_breaker_cumulative_loss_pct
+            ):
+                ev.resolved_at = datetime.utcnow()
+                ev.resolved_by = "config_threshold_updated"
+            else:
+                still_active.append(ev)
+
+        if still_active:
+            event = still_active[0]
             return GuardrailCheck(
                 passed=False,
                 guardrail="circuit_breaker",
@@ -139,35 +181,12 @@ class GuardrailChecker:
                 details={"event_id": event.id, "reason": event.trigger_reason},
             )
 
-        # Check for new triggers
-        window_start = datetime.utcnow() - timedelta(
-            days=settings.crypto_circuit_breaker_window_days
-        )
-
-        # Get recent closed orders within the window
-        stmt = select(Order).where(
-            and_(
-                Order.closed_at >= window_start,
-                Order.realised_pnl.is_not(None),
-            )
-        ).order_by(Order.closed_at.desc())
-        result = await self.db.execute(stmt)
-        recent_orders = result.scalars().all()
-
         if not recent_orders:
             return GuardrailCheck(
                 passed=True,
                 guardrail="circuit_breaker",
                 message="No recent closed orders — circuit breaker not triggered",
             )
-
-        # Check consecutive losses
-        consecutive_losses = 0
-        for order in recent_orders:
-            if order.realised_pnl is not None and order.realised_pnl < 0:
-                consecutive_losses += 1
-            else:
-                break
 
         max_consecutive = settings.crypto_circuit_breaker_consecutive_losses
         if consecutive_losses >= max_consecutive:
