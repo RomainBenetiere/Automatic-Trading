@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import {
   Bitcoin, Shield, ShieldAlert, ShieldCheck, ShieldX,
   TrendingUp, TrendingDown, Activity, AlertTriangle,
-  Play, BarChart3, Clock, DollarSign
+  Play, BarChart3, Clock, DollarSign, Wallet, Trash2
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -35,20 +35,25 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 export default function CryptoExecution() {
   const [triggering, setTriggering] = useState(false)
+  const [resettingPaper, setResettingPaper] = useState(false)
 
   const { data: positions, loading: posLoading } = usePolling(
     useCallback(() => crypto.getPositions(), []),
+    15000
+  )
+  const { data: paperPortfolio, loading: paperLoading, refetch: refetchPaper } = usePolling(
+    useCallback(() => crypto.getPaperPortfolio(), []),
     15000
   )
   const { data: orders, loading: ordersLoading, refetch: refetchOrders } = usePolling(
     useCallback(() => crypto.getOrders({ limit: '30' }), []),
     30000
   )
-  const { data: guardrails, loading: guardLoading } = usePolling(
+  const { data: guardrails, loading: guardLoading, refetch: refetchGuardrails } = usePolling(
     useCallback(() => crypto.getGuardrailStatus(), []),
     30000
   )
-  const { data: performance, loading: perfLoading } = usePolling(
+  const { data: performance, loading: perfLoading, refetch: refetchPerformance } = usePolling(
     useCallback(() => crypto.getPerformance(30), []),
     60000
   )
@@ -62,8 +67,28 @@ export default function CryptoExecution() {
     try {
       await jobs.triggerCrypto()
       refetchOrders()
+      refetchPaper()
+      refetchGuardrails()
+      refetchPerformance()
     } catch (e) { console.error(e) }
     setTriggering(false)
+  }
+
+  const handleResetPaper = async () => {
+    if (!window.confirm('Voulez-vous vraiment purger tous les Paper Trades et réinitialiser le portefeuille simulé à son budget initial ?')) {
+      return
+    }
+    setResettingPaper(true)
+    try {
+      await crypto.resetPaperPortfolio()
+      refetchPaper()
+      refetchOrders()
+      refetchGuardrails()
+      refetchPerformance()
+    } catch (e) {
+      console.error(e)
+    }
+    setResettingPaper(false)
   }
 
   const mode = guardrails?.mode || 'paper'
@@ -86,6 +111,16 @@ export default function CryptoExecution() {
           <span className={`badge badge-${mode}`}>
             {mode === 'live' ? '● LIVE' : '◉ PAPER'}
           </span>
+          <button
+            className="btn btn-secondary"
+            onClick={handleResetPaper}
+            disabled={resettingPaper}
+            title="Supprimer tous les ordres Paper et réinitialiser le budget virtuel"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <Trash2 size={15} />
+            {resettingPaper ? 'Purge…' : 'Purger Paper Trades'}
+          </button>
           <button className="btn btn-primary" onClick={handleTrigger} disabled={triggering}>
             <Play size={16} />
             {triggering ? 'Running…' : 'Run Crypto Job'}
@@ -162,11 +197,183 @@ export default function CryptoExecution() {
         </div>
       </div>
 
-      {/* Positions */}
+      {/* Simulated Paper Portfolio State */}
+      <div className="section">
+        <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Wallet size={20} style={{ color: 'var(--accent-primary)' }} />
+            <span>Portefeuille Paper Trading (Simulation)</span>
+          </div>
+          {paperPortfolio && (
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+              Budget initial : €{paperPortfolio.initial_budget_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          )}
+        </div>
+
+        {paperPortfolio && (
+          <div className="summary-grid" style={{ marginBottom: 16 }}>
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Valeur Portefeuille Paper</span>
+                <Wallet size={18} style={{ color: 'var(--accent-primary)', opacity: 0.7 }} />
+              </div>
+              <div className="card-value">
+                €{(paperPortfolio.portfolio_value_eur ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div style={{
+                color: (paperPortfolio.total_return_eur || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)',
+                fontSize: '0.8rem',
+                marginTop: 4,
+                fontWeight: 600,
+              }}>
+                {(paperPortfolio.total_return_eur || 0) >= 0 ? '+' : ''}
+                {(paperPortfolio.total_return_eur ?? 0).toFixed(2)} € ({(paperPortfolio.total_return_pct || 0) >= 0 ? '+' : ''}{(paperPortfolio.total_return_pct ?? 0).toFixed(2)}%)
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Cash EUR Disponible</span>
+                <DollarSign size={18} style={{ color: 'var(--color-buy)', opacity: 0.7 }} />
+              </div>
+              <div className="card-value">
+                €{(paperPortfolio.cash_eur ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+                Prêt pour nouveaux achats
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Positions Crypto Ouvertes</span>
+                <Bitcoin size={18} style={{ color: 'var(--accent-secondary)', opacity: 0.7 }} />
+              </div>
+              <div className="card-value">
+                €{(paperPortfolio.positions_value_eur ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+                {paperPortfolio.open_positions_count || 0} actif(s) ({paperPortfolio.open_lots_count || 0} lot(s)) • Coût : €{(paperPortfolio.invested_cost_eur ?? 0).toFixed(2)}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">P&L Latent / Réalisé</span>
+                <Activity size={18} style={{ color: 'var(--accent-primary)', opacity: 0.7 }} />
+              </div>
+              <div className="card-value" style={{
+                color: (paperPortfolio.unrealised_pnl_eur || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)'
+              }}>
+                {(paperPortfolio.unrealised_pnl_eur || 0) >= 0 ? '+' : ''}{(paperPortfolio.unrealised_pnl_eur ?? 0).toFixed(2)} €
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
+                Latent : {(paperPortfolio.unrealised_pnl_pct || 0) >= 0 ? '+' : ''}{(paperPortfolio.unrealised_pnl_pct ?? 0).toFixed(2)}% • Réalisé : {(paperPortfolio.realised_pnl_eur || 0) >= 0 ? '+' : ''}{(paperPortfolio.realised_pnl_eur ?? 0).toFixed(2)} €
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="card" style={{ padding: 0, overflow: 'auto' }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Actif</th>
+                <th>Lots</th>
+                <th>Quantité</th>
+                <th>Prix Entrée Moy.</th>
+                <th>Cours Actuel</th>
+                <th>Coût Investi</th>
+                <th>Valeur (EUR)</th>
+                <th>P&L Latent</th>
+                <th>Stop / Trailing</th>
+                <th>Take Profit</th>
+                <th>24h Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paperPortfolio ? (
+                <>
+                  <tr style={{ background: 'rgba(6, 182, 212, 0.04)' }}>
+                    <td style={{ fontWeight: 600 }}>EUR (Cash virtuel)</td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number">{paperPortfolio.cash_eur?.toFixed(2)}</td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number" style={{ fontWeight: 600 }}>
+                      €{paperPortfolio.cash_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number">—</td>
+                    <td className="cell-number">—</td>
+                  </tr>
+                  {paperPortfolio.positions && paperPortfolio.positions.length > 0 ? (
+                    paperPortfolio.positions.map((pos) => {
+                      const effectiveStop = Math.max(pos.stop_loss_price || 0, pos.trailing_stop_price || 0)
+                      return (
+                        <tr key={pos.symbol}>
+                          <td style={{ fontWeight: 600 }}>{pos.symbol}</td>
+                          <td className="cell-number">{pos.lots_count}</td>
+                          <td className="cell-number">{pos.quantity?.toFixed(6)}</td>
+                          <td className="cell-number">
+                            €{pos.avg_buy_price?.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}
+                          </td>
+                          <td className="cell-number">
+                            {pos.current_price ? `€${pos.current_price.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}` : '—'}
+                          </td>
+                          <td className="cell-number">
+                            €{pos.cost_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="cell-number" style={{ fontWeight: 600 }}>
+                            €{pos.market_value_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className={`cell-number ${
+                            (pos.unrealised_pnl_eur || 0) > 0 ? 'cell-positive' : (pos.unrealised_pnl_eur || 0) < 0 ? 'cell-negative' : ''
+                          }`}>
+                            {pos.unrealised_pnl_eur >= 0 ? '+' : ''}{pos.unrealised_pnl_eur?.toFixed(2)} € ({pos.unrealised_pnl_pct >= 0 ? '+' : ''}{pos.unrealised_pnl_pct?.toFixed(2)}%)
+                          </td>
+                          <td className="cell-number" style={{ fontSize: '0.8rem', color: 'var(--color-sell)' }}>
+                            {effectiveStop > 0 ? `€${effectiveStop.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}` : '—'}
+                          </td>
+                          <td className="cell-number" style={{ fontSize: '0.8rem', color: 'var(--color-buy)' }}>
+                            {pos.take_profit_price ? `€${pos.take_profit_price.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}` : '—'}
+                          </td>
+                          <td className={`cell-number ${
+                            pos.change_24h_pct > 0 ? 'cell-positive' : pos.change_24h_pct < 0 ? 'cell-negative' : ''
+                          }`}>
+                            {pos.change_24h_pct != null ? `${pos.change_24h_pct > 0 ? '+' : ''}${pos.change_24h_pct}%` : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={11} className="empty-state" style={{ padding: '16px' }}>
+                        Aucune position crypto ouverte en simulation Paper (100% Cash EUR)
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ) : (
+                <tr>
+                  <td colSpan={11} className="empty-state">
+                    {paperLoading ? 'Chargement du portefeuille Paper…' : 'Portefeuille Paper indisponible'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Live Bitvavo Positions */}
       <div className="section">
         <div className="section-title">
           <Bitcoin size={20} style={{ color: 'var(--accent-primary)' }} />
-          Live Positions
+          Live Positions (Compte Bitvavo Réel)
         </div>
         <div className="card" style={{ padding: 0, overflow: 'auto' }}>
           <table className="data-table">

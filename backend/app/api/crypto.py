@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, desc, and_, func
+from sqlalchemy import select, desc, and_, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.composite import compute_composite
@@ -63,6 +63,141 @@ async def get_crypto_positions() -> list[dict[str, Any]]:
         })
 
     return positions
+
+
+@router.get("/paper-portfolio")
+async def get_paper_portfolio(
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get the simulated Paper Trading portfolio state (cash, open positions, P&L, stops)."""
+    client = BitvavoClient()
+    initial_budget = settings.crypto_global_budget_eur
+
+    # 1. Cumulative realised P&L from closed paper BUY lots
+    closed_res = await db.execute(
+        select(func.coalesce(func.sum(Order.realised_pnl), 0.0)).where(
+            and_(
+                Order.paper_mode == True,  # noqa: E712
+                Order.side == OrderSide.BUY,
+                Order.status == OrderStatus.PAPER,
+                Order.closed_at.is_not(None),
+            )
+        )
+    )
+    realised_pnl = float(closed_res.scalar() or 0.0)
+
+    # 2. Currently open paper BUY lots
+    open_stmt = (
+        select(Order)
+        .where(
+            and_(
+                Order.paper_mode == True,  # noqa: E712
+                Order.side == OrderSide.BUY,
+                Order.status == OrderStatus.PAPER,
+                Order.closed_at.is_(None),
+            )
+        )
+        .order_by(Order.created_at, Order.id)
+    )
+    open_lots = list((await db.execute(open_stmt)).scalars().all())
+
+    by_symbol: dict[str, list[Order]] = {}
+    invested_cost_eur = 0.0
+    for lot in open_lots:
+        by_symbol.setdefault(lot.symbol, []).append(lot)
+        invested_cost_eur += lot.order_value_eur or 0.0
+
+    positions = []
+    positions_value_eur = 0.0
+
+    for market, lots in sorted(by_symbol.items()):
+        total_qty = sum(l.quantity or 0.0 for l in lots)
+        total_cost = sum(l.order_value_eur or 0.0 for l in lots)
+        avg_buy_price = (total_cost / total_qty) if total_qty > 0 else 0.0
+
+        price = await asyncio.to_thread(client.get_ticker_price, market)
+        ticker = await asyncio.to_thread(client.get_ticker_24h, market)
+
+        change_24h = None
+        try:
+            open_px = float((ticker or {}).get("open") or 0)
+            last_px = float((ticker or {}).get("last") or price or 0)
+            if open_px > 0 and last_px > 0:
+                change_24h = round((last_px - open_px) / open_px * 100, 2)
+        except (TypeError, ValueError):
+            pass
+
+        effective_price = price if price is not None else avg_buy_price
+        market_value = total_qty * effective_price
+        positions_value_eur += market_value
+        unrealised_pnl = market_value - total_cost
+        unrealised_pnl_pct = (unrealised_pnl / total_cost * 100) if total_cost > 0 else 0.0
+
+        stop_losses = [l.stop_loss_price for l in lots if l.stop_loss_price is not None]
+        trailing_stops = [l.trailing_stop_price for l in lots if l.trailing_stop_price is not None]
+        take_profits = [l.take_profit_price for l in lots if l.take_profit_price is not None]
+        opened_dates = [l.executed_at or l.created_at for l in lots if (l.executed_at or l.created_at)]
+
+        positions.append({
+            "symbol": market,
+            "base_asset": market.split("-")[0],
+            "lots_count": len(lots),
+            "quantity": round(total_qty, 8),
+            "avg_buy_price": round(avg_buy_price, 6),
+            "current_price": effective_price,
+            "cost_eur": round(total_cost, 2),
+            "market_value_eur": round(market_value, 2),
+            "unrealised_pnl_eur": round(unrealised_pnl, 2),
+            "unrealised_pnl_pct": round(unrealised_pnl_pct, 2),
+            "stop_loss_price": round(max(stop_losses), 6) if stop_losses else None,
+            "trailing_stop_price": round(max(trailing_stops), 6) if trailing_stops else None,
+            "take_profit_price": round(min(take_profits), 6) if take_profits else None,
+            "change_24h_pct": change_24h,
+            "opened_at": min(opened_dates).isoformat() if opened_dates else None,
+        })
+
+    cash_eur = initial_budget + realised_pnl - invested_cost_eur
+    portfolio_value_eur = cash_eur + positions_value_eur
+    unrealised_total_eur = positions_value_eur - invested_cost_eur
+    unrealised_total_pct = (
+        (unrealised_total_eur / invested_cost_eur * 100) if invested_cost_eur > 0 else 0.0
+    )
+    total_return_eur = portfolio_value_eur - initial_budget
+    total_return_pct = (
+        (total_return_eur / initial_budget * 100) if initial_budget > 0 else 0.0
+    )
+
+    return {
+        "initial_budget_eur": round(initial_budget, 2),
+        "cash_eur": round(cash_eur, 2),
+        "invested_cost_eur": round(invested_cost_eur, 2),
+        "positions_value_eur": round(positions_value_eur, 2),
+        "portfolio_value_eur": round(portfolio_value_eur, 2),
+        "realised_pnl_eur": round(realised_pnl, 2),
+        "unrealised_pnl_eur": round(unrealised_total_eur, 2),
+        "unrealised_pnl_pct": round(unrealised_total_pct, 2),
+        "total_return_eur": round(total_return_eur, 2),
+        "total_return_pct": round(total_return_pct, 2),
+        "open_positions_count": len(positions),
+        "open_lots_count": len(open_lots),
+        "positions": positions,
+    }
+
+
+@router.post("/paper-portfolio/reset")
+async def reset_paper_portfolio(
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Purge all simulated paper orders and reset circuit breaker events."""
+    res_orders = await db.execute(delete(Order).where(Order.paper_mode == True))  # noqa: E712
+    await db.execute(delete(CircuitBreakerEvent))
+    await db.commit()
+    deleted_count = res_orders.rowcount if res_orders.rowcount is not None else 0
+    return {
+        "status": "ok",
+        "deleted_orders": deleted_count,
+        "message": f"{deleted_count} ordres Paper supprimés et portefeuille réinitialisé à €{settings.crypto_global_budget_eur:.2f}.",
+    }
 
 
 @router.get("/orders")

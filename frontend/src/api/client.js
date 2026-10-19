@@ -55,6 +55,8 @@ export const recommendations = {
 // ── Crypto ─────────────────────────────────────────────────────
 export const crypto = {
   getPositions: () => request('/crypto/positions'),
+  getPaperPortfolio: () => request('/crypto/paper-portfolio'),
+  resetPaperPortfolio: () => request('/crypto/paper-portfolio/reset', { method: 'POST' }),
   getOrders: (params = {}) => {
     const qs = new URLSearchParams(params).toString()
     return request(`/crypto/orders${qs ? '?' + qs : ''}`)
