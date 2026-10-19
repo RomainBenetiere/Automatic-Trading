@@ -265,20 +265,21 @@ class PaperTrader:
             if price is None:
                 continue
 
-            # Update trailing stop (ratchet upward only)
-            highest = order.highest_price_since_entry or order.price or price
+            # Update trailing stop (ratchet upward only once position has risen above entry price)
+            entry_price = order.price or price
+            highest = order.highest_price_since_entry or entry_price
             new_high = max(price, highest)
             order.highest_price_since_entry = new_high
-            new_trailing = self.guardrails.compute_trailing_stop(price, new_high)
-            prev_trailing = order.trailing_stop_price or order.stop_loss_price or 0.0
-            if new_trailing > prev_trailing:
-                order.trailing_stop_price = new_trailing
+            if new_high > entry_price:
+                new_trailing = self.guardrails.compute_trailing_stop(price, new_high)
+                prev_trailing = order.trailing_stop_price or order.stop_loss_price or 0.0
+                if new_trailing > prev_trailing:
+                    order.trailing_stop_price = new_trailing
 
             # Check stop conditions
-            effective_stop = max(order.stop_loss_price or 0.0, order.trailing_stop_price or 0.0)
             should_close, reason = should_trigger_stop(
                 current_price=price,
-                stop_loss_price=effective_stop,
+                stop_loss_price=order.stop_loss_price,
                 take_profit_price=order.take_profit_price,
                 trailing_stop_price=order.trailing_stop_price,
             )

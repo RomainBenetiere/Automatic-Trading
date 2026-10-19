@@ -313,17 +313,18 @@ export default function CryptoExecution() {
                   {paperPortfolio.positions && paperPortfolio.positions.length > 0 ? (
                     paperPortfolio.positions.map((pos) => {
                       const effectiveStop = Math.max(pos.stop_loss_price || 0, pos.trailing_stop_price || 0)
+                      const fmtPx = (px) => {
+                        if (px == null || px <= 0) return '—'
+                        const digits = px < 0.1 ? 6 : px < 10 ? 4 : 2
+                        return `€${px.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`
+                      }
                       return (
                         <tr key={pos.symbol}>
                           <td style={{ fontWeight: 600 }}>{pos.symbol}</td>
                           <td className="cell-number">{pos.lots_count}</td>
                           <td className="cell-number">{pos.quantity?.toFixed(6)}</td>
-                          <td className="cell-number">
-                            €{pos.avg_buy_price?.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}
-                          </td>
-                          <td className="cell-number">
-                            {pos.current_price ? `€${pos.current_price.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}` : '—'}
-                          </td>
+                          <td className="cell-number">{fmtPx(pos.avg_buy_price)}</td>
+                          <td className="cell-number">{fmtPx(pos.current_price)}</td>
                           <td className="cell-number">
                             €{pos.cost_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
@@ -336,10 +337,10 @@ export default function CryptoExecution() {
                             {pos.unrealised_pnl_eur >= 0 ? '+' : ''}{pos.unrealised_pnl_eur?.toFixed(2)} € ({pos.unrealised_pnl_pct >= 0 ? '+' : ''}{pos.unrealised_pnl_pct?.toFixed(2)}%)
                           </td>
                           <td className="cell-number" style={{ fontSize: '0.8rem', color: 'var(--color-sell)' }}>
-                            {effectiveStop > 0 ? `€${effectiveStop.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}` : '—'}
+                            {fmtPx(effectiveStop)}
                           </td>
                           <td className="cell-number" style={{ fontSize: '0.8rem', color: 'var(--color-buy)' }}>
-                            {pos.take_profit_price ? `€${pos.take_profit_price.toLocaleString('fr-FR', { maximumFractionDigits: 4 })}` : '—'}
+                            {fmtPx(pos.take_profit_price)}
                           </td>
                           <td className={`cell-number ${
                             pos.change_24h_pct > 0 ? 'cell-positive' : pos.change_24h_pct < 0 ? 'cell-negative' : ''
@@ -501,53 +502,70 @@ export default function CryptoExecution() {
                 <th>Value</th>
                 <th>Status</th>
                 <th>P&L</th>
+                <th>Raison / Clôture</th>
                 <th>Mode</th>
               </tr>
             </thead>
             <tbody>
               {orders && orders.length > 0 ? (
-                orders.map((o) => (
-                  <tr key={o.id}>
-                    <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      {o.created_at ? new Date(o.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
-                    </td>
-                    <td style={{ fontWeight: 600 }}>{o.symbol}</td>
-                    <td>
-                      <span className={`badge badge-${o.side === 'buy' ? 'buy' : 'sell'}`}>
-                        {o.side}
-                      </span>
-                    </td>
-                    <td className="cell-number">{o.quantity?.toFixed(6)}</td>
-                    <td className="cell-number">{o.price ? `€${o.price.toFixed(2)}` : '—'}</td>
-                    <td className="cell-number">{o.order_value_eur ? `€${o.order_value_eur.toFixed(2)}` : '—'}</td>
-                    <td>
-                      <span style={{
-                        fontSize: '0.75rem',
-                        color: o.status === 'filled' || o.status === 'paper'
-                          ? 'var(--color-success)'
-                          : o.status === 'cancelled' || o.status === 'failed'
-                          ? 'var(--color-sell)'
-                          : 'var(--color-hold)',
-                        fontWeight: 600,
-                      }}>
-                        {o.status}
-                      </span>
-                    </td>
-                    <td className={`cell-number ${
-                      (o.realised_pnl || 0) > 0 ? 'cell-positive' : (o.realised_pnl || 0) < 0 ? 'cell-negative' : ''
-                    }`}>
-                      {o.realised_pnl != null ? `${o.realised_pnl >= 0 ? '+' : ''}${o.realised_pnl.toFixed(2)} €` : '—'}
-                    </td>
-                    <td>
-                      <span className={`badge badge-${o.paper_mode ? 'paper' : 'live'}`}>
-                        {o.paper_mode ? 'paper' : 'live'}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                orders.map((o) => {
+                  const fmtPrice = (px) => {
+                    if (px == null) return '—'
+                    if (px < 0.1) return `€${px.toFixed(6)}`
+                    if (px < 10) return `€${px.toFixed(4)}`
+                    return `€${px.toFixed(2)}`
+                  }
+                  return (
+                    <tr key={o.id}>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        <div>{o.created_at ? new Date(o.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</div>
+                        {o.closed_at && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--accent-primary)' }}>
+                            Clôturé : {new Date(o.closed_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{o.symbol}</td>
+                      <td>
+                        <span className={`badge badge-${o.side === 'buy' ? 'buy' : 'sell'}`}>
+                          {o.side}
+                        </span>
+                      </td>
+                      <td className="cell-number">{o.quantity?.toFixed(6)}</td>
+                      <td className="cell-number">{fmtPrice(o.price)}</td>
+                      <td className="cell-number">{o.order_value_eur ? `€${o.order_value_eur.toFixed(2)}` : '—'}</td>
+                      <td>
+                        <span style={{
+                          fontSize: '0.75rem',
+                          color: o.status === 'filled' || o.status === 'paper'
+                            ? 'var(--color-success)'
+                            : o.status === 'cancelled' || o.status === 'failed'
+                            ? 'var(--color-sell)'
+                            : 'var(--color-hold)',
+                          fontWeight: 600,
+                        }}>
+                          {o.status}
+                        </span>
+                      </td>
+                      <td className={`cell-number ${
+                        (o.realised_pnl || 0) > 0 ? 'cell-positive' : (o.realised_pnl || 0) < 0 ? 'cell-negative' : ''
+                      }`}>
+                        {o.realised_pnl != null ? `${o.realised_pnl >= 0 ? '+' : ''}${o.realised_pnl.toFixed(2)} €` : '—'}
+                      </td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', maxWidth: 340 }}>
+                        {o.justification || '—'}
+                      </td>
+                      <td>
+                        <span className={`badge badge-${o.paper_mode ? 'paper' : 'live'}`}>
+                          {o.paper_mode ? 'paper' : 'live'}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })
               ) : (
                 <tr>
-                  <td colSpan={9} className="empty-state">
+                  <td colSpan={10} className="empty-state">
                     {ordersLoading ? 'Loading…' : 'No orders yet'}
                   </td>
                 </tr>

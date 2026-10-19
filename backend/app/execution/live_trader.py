@@ -274,54 +274,56 @@ class LiveTrader:
             if price is None:
                 continue
 
-            # 3. Update trailing stop
-            highest = order.highest_price_since_entry or order.price or price
+            # 3. Update trailing stop (ratchet upward only once position has risen above entry price)
+            entry_price = order.price or price
+            highest = order.highest_price_since_entry or entry_price
             new_high = max(price, highest)
             order.highest_price_since_entry = new_high
-            new_trailing = self.guardrails.compute_trailing_stop(price, new_high)
 
-            # Check if trailing stop moved UP
-            prev_trailing = order.trailing_stop_price or order.stop_loss_price or 0.0
-            if new_trailing > prev_trailing:
-                order.trailing_stop_price = new_trailing
-                logger.info(
-                    "Trailing stop raised for %s: %.2f -> %.2f (high: %.2f)",
-                    order.symbol,
-                    prev_trailing,
-                    new_trailing,
-                    new_high,
-                )
-                # Cancel previous Bitvavo stop-loss and place a new one with the higher trailing price
-                if order.stop_loss_order_id:
-                    try:
-                        self.bitvavo.cancel_order(order.symbol, order.stop_loss_order_id)
-                        order.stop_loss_order_id = None
-                    except Exception as ce:
-                        logger.warning("Error cancelling old stop order on Bitvavo: %s", ce)
+            if new_high > entry_price:
+                new_trailing = self.guardrails.compute_trailing_stop(price, new_high)
 
-                try:
-                    new_stop_res = self.bitvavo.place_stop_loss_order(
-                        market=order.symbol,
-                        side="sell",
-                        amount=order.quantity,
-                        trigger_price=new_trailing,
+                # Check if trailing stop moved UP
+                prev_trailing = order.trailing_stop_price or order.stop_loss_price or 0.0
+                if new_trailing > prev_trailing:
+                    order.trailing_stop_price = new_trailing
+                    logger.info(
+                        "Trailing stop raised for %s: %.2f -> %.2f (high: %.2f)",
+                        order.symbol,
+                        prev_trailing,
+                        new_trailing,
+                        new_high,
                     )
-                    if isinstance(new_stop_res, dict) and "orderId" in new_stop_res:
-                        order.stop_loss_order_id = new_stop_res.get("orderId")
-                        logger.info(
-                            "Updated native Bitvavo Stop-Loss for %s: orderId=%s trigger=%.2f",
-                            order.symbol,
-                            order.stop_loss_order_id,
-                            new_trailing,
+                    # Cancel previous Bitvavo stop-loss and place a new one with the higher trailing price
+                    if order.stop_loss_order_id:
+                        try:
+                            self.bitvavo.cancel_order(order.symbol, order.stop_loss_order_id)
+                            order.stop_loss_order_id = None
+                        except Exception as ce:
+                            logger.warning("Error cancelling old stop order on Bitvavo: %s", ce)
+
+                    try:
+                        new_stop_res = self.bitvavo.place_stop_loss_order(
+                            market=order.symbol,
+                            side="sell",
+                            amount=order.quantity,
+                            trigger_price=new_trailing,
                         )
-                except Exception as ne:
-                    logger.exception("Error placing updated stop-loss on Bitvavo: %s", ne)
+                        if isinstance(new_stop_res, dict) and "orderId" in new_stop_res:
+                            order.stop_loss_order_id = new_stop_res.get("orderId")
+                            logger.info(
+                                "Updated native Bitvavo Stop-Loss for %s: orderId=%s trigger=%.2f",
+                                order.symbol,
+                                order.stop_loss_order_id,
+                                new_trailing,
+                            )
+                    except Exception as ne:
+                        logger.exception("Error placing updated stop-loss on Bitvavo: %s", ne)
 
             # 4. Check if take-profit or stop condition met
-            effective_stop = max(order.stop_loss_price or 0.0, order.trailing_stop_price or 0.0)
             should_close, reason = should_trigger_stop(
                 current_price=price,
-                stop_loss_price=effective_stop,
+                stop_loss_price=order.stop_loss_price,
                 take_profit_price=order.take_profit_price,
                 trailing_stop_price=order.trailing_stop_price,
             )
