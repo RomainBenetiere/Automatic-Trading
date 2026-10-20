@@ -69,22 +69,32 @@ async def get_crypto_positions() -> list[dict[str, Any]]:
 async def get_paper_portfolio(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Get the simulated Paper Trading portfolio state (cash, open positions, P&L, stops)."""
+    """Get the simulated Paper Trading portfolio state (cash, open positions, P&L, fees, stops)."""
     client = BitvavoClient()
     initial_budget = settings.crypto_global_budget_eur
+    fee_rate = settings.crypto_fee_pct / 100.0
 
-    # 1. Cumulative realised P&L from closed paper BUY lots
-    closed_res = await db.execute(
-        select(func.coalesce(func.sum(Order.realised_pnl), 0.0)).where(
-            and_(
-                Order.paper_mode == True,  # noqa: E712
-                Order.side == OrderSide.BUY,
-                Order.status == OrderStatus.PAPER,
-                Order.closed_at.is_not(None),
-            )
+    # 1. Cumulative realised P&L and fees from closed paper BUY lots
+    closed_lots_stmt = select(Order).where(
+        and_(
+            Order.paper_mode == True,  # noqa: E712
+            Order.side == OrderSide.BUY,
+            Order.status == OrderStatus.PAPER,
+            Order.closed_at.is_not(None),
         )
     )
-    realised_pnl = float(closed_res.scalar() or 0.0)
+    closed_lots = list((await db.execute(closed_lots_stmt)).scalars().all())
+    realised_pnl = sum(float(o.realised_pnl or 0.0) for o in closed_lots)
+    closed_fees_eur = 0.0
+    for o in closed_lots:
+        entry_val = float(o.order_value_eur or ((o.price or 0.0) * (o.quantity or 0.0)))
+        net_pnl = float(o.realised_pnl or 0.0)
+        exit_val = (
+            (net_pnl + entry_val * (1.0 + fee_rate)) / (1.0 - fee_rate)
+            if (1.0 - fee_rate) > 0
+            else entry_val
+        )
+        closed_fees_eur += (entry_val + max(0.0, exit_val)) * fee_rate
 
     # 2. Currently open paper BUY lots
     open_stmt = (
@@ -109,6 +119,7 @@ async def get_paper_portfolio(
 
     positions = []
     positions_value_eur = 0.0
+    unrealised_total_eur = 0.0
 
     for market, lots in sorted(by_symbol.items()):
         total_qty = sum(l.quantity or 0.0 for l in lots)
@@ -130,7 +141,11 @@ async def get_paper_portfolio(
         effective_price = price if price is not None else avg_buy_price
         market_value = total_qty * effective_price
         positions_value_eur += market_value
-        unrealised_pnl = market_value - total_cost
+        buy_fee = total_cost * fee_rate
+        est_sell_fee = market_value * fee_rate
+        pos_fees = buy_fee + est_sell_fee
+        unrealised_pnl = (market_value - total_cost) - pos_fees
+        unrealised_total_eur += unrealised_pnl
         unrealised_pnl_pct = (unrealised_pnl / total_cost * 100) if total_cost > 0 else 0.0
 
         stop_losses = [l.stop_loss_price for l in lots if l.stop_loss_price is not None]
@@ -147,6 +162,7 @@ async def get_paper_portfolio(
             "current_price": effective_price,
             "cost_eur": round(total_cost, 2),
             "market_value_eur": round(market_value, 2),
+            "fees_eur": round(pos_fees, 2),
             "unrealised_pnl_eur": round(unrealised_pnl, 2),
             "unrealised_pnl_pct": round(unrealised_pnl_pct, 2),
             "stop_loss_price": round(max(stop_losses), 6) if stop_losses else None,
@@ -156,9 +172,9 @@ async def get_paper_portfolio(
             "opened_at": min(opened_dates).isoformat() if opened_dates else None,
         })
 
-    cash_eur = initial_budget + realised_pnl - invested_cost_eur
+    open_buy_fees_eur = invested_cost_eur * fee_rate
+    cash_eur = initial_budget + realised_pnl - invested_cost_eur - open_buy_fees_eur
     portfolio_value_eur = cash_eur + positions_value_eur
-    unrealised_total_eur = positions_value_eur - invested_cost_eur
     unrealised_total_pct = (
         (unrealised_total_eur / invested_cost_eur * 100) if invested_cost_eur > 0 else 0.0
     )
@@ -178,6 +194,8 @@ async def get_paper_portfolio(
         "unrealised_pnl_pct": round(unrealised_total_pct, 2),
         "total_return_eur": round(total_return_eur, 2),
         "total_return_pct": round(total_return_pct, 2),
+        "fee_pct": settings.crypto_fee_pct,
+        "total_fees_eur": round(open_buy_fees_eur + closed_fees_eur, 2),
         "open_positions_count": len(positions),
         "open_lots_count": len(open_lots),
         "positions": positions,
@@ -218,6 +236,21 @@ async def get_orders(
     stmt = stmt.limit(limit)
     result = await db.execute(stmt)
     orders = result.scalars().all()
+    fee_rate = settings.crypto_fee_pct / 100.0
+
+    def _compute_order_fee(o: Order) -> float:
+        if o.status in (OrderStatus.CANCELLED, OrderStatus.FAILED):
+            return 0.0
+        val = float(o.order_value_eur or ((o.price or 0.0) * (o.quantity or 0.0)))
+        if o.side == OrderSide.BUY and o.closed_at is not None and o.realised_pnl is not None:
+            net_pnl = float(o.realised_pnl)
+            exit_val = (
+                (net_pnl + val * (1.0 + fee_rate)) / (1.0 - fee_rate)
+                if (1.0 - fee_rate) > 0
+                else val
+            )
+            return round((val + max(0.0, exit_val)) * fee_rate, 2)
+        return round(val * fee_rate, 2)
 
     return [
         {
@@ -227,6 +260,7 @@ async def get_orders(
             "quantity": o.quantity,
             "price": o.price,
             "order_value_eur": o.order_value_eur,
+            "fee_eur": _compute_order_fee(o),
             "status": o.status.value,
             "paper_mode": o.paper_mode,
             "justification": o.justification,
@@ -368,6 +402,10 @@ async def get_guardrail_status(
         },
         "global_budget": {
             "max_eur": settings.crypto_global_budget_eur,
+            "status": "ok",
+        },
+        "execution_fee": {
+            "pct": settings.crypto_fee_pct,
             "status": "ok",
         },
         "recent_stats": {

@@ -237,6 +237,7 @@ class LiveTrader:
         result = await self.db.execute(stmt)
         open_orders = result.scalars().all()
 
+        fee_rate = settings.crypto_fee_pct / 100.0
         triggered = []
         for order in open_orders:
             # 1. Check if the native stop-loss on Bitvavo has already filled
@@ -246,24 +247,30 @@ class LiveTrader:
                     order_status = status_res.get("status") if isinstance(status_res, dict) else None
                     if order_status == "filled":
                         fill_price = float(status_res.get("price") or order.stop_loss_price or order.price or 0.0)
-                        pnl = (fill_price - (order.price or 0.0)) * (order.quantity or 0.0)
+                        qty = order.quantity or 0.0
+                        entry_val = (order.price or 0.0) * qty
+                        exit_val = fill_price * qty
+                        fees = (entry_val + exit_val) * fee_rate
+                        pnl = (exit_val - entry_val) - fees
                         order.realised_pnl = round(pnl, 2)
                         order.closed_at = datetime.utcnow()
                         order.justification = (
-                            f"{order.justification} | CLOSED: Native Bitvavo stop-loss filled @ {fill_price:.2f}"
+                            f"{order.justification} | CLOSED: Native Bitvavo stop-loss filled @ {fill_price:.2f} (fee: €{fees:.2f})"
                         )
                         triggered.append({
                             "order_id": order.id,
                             "symbol": order.symbol,
                             "reason": "bitvavo_native_stop_loss_filled",
-                            "pnl": pnl,
+                            "pnl": round(pnl, 2),
+                            "fees_eur": round(fees, 2),
                             "close_price": fill_price,
                         })
                         logger.info(
-                            "Live position CLOSED via native Bitvavo stop: %s @ %.2f — PnL: €%.2f",
+                            "Live position CLOSED via native Bitvavo stop: %s @ %.2f — Net PnL: €%.2f (fees: €%.2f)",
                             order.symbol,
                             fill_price,
                             pnl,
+                            fees,
                         )
                         continue
                 except Exception as e:
@@ -345,25 +352,31 @@ class LiveTrader:
                         amount=order.quantity,
                     )
 
-                    pnl = (price - (order.price or 0)) * (order.quantity or 0)
+                    qty = order.quantity or 0.0
+                    entry_val = (order.price or 0.0) * qty
+                    exit_val = price * qty
+                    fees = (entry_val + exit_val) * fee_rate
+                    pnl = (exit_val - entry_val) - fees
                     order.realised_pnl = round(pnl, 2)
                     order.closed_at = datetime.utcnow()
-                    order.justification = f"{order.justification} | CLOSED: {reason}"
+                    order.justification = f"{order.justification} | CLOSED: {reason} (fee: €{fees:.2f})"
 
                     triggered.append({
                         "order_id": order.id,
                         "symbol": order.symbol,
                         "reason": reason,
-                        "pnl": pnl,
+                        "pnl": round(pnl, 2),
+                        "fees_eur": round(fees, 2),
                         "close_price": price,
                         "sell_result": sell_result,
                     })
 
                     logger.info(
-                        "Live position CLOSED: %s — %s — PnL: €%.2f",
+                        "Live position CLOSED: %s — %s — Net PnL: €%.2f (fees: €%.2f)",
                         order.symbol,
                         reason,
                         pnl,
+                        fees,
                     )
                 except Exception as e:
                     logger.exception("Failed to close position %s: %s", order.symbol, e)

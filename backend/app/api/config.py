@@ -27,6 +27,7 @@ async def get_config() -> dict[str, Any]:
         "mode": "live" if settings.crypto_live_mode else "paper",
         "crypto_basket": settings.crypto_basket_list,
         "guardrails": {
+            "fee_pct": settings.crypto_fee_pct,
             "buy_pct": settings.crypto_buy_pct,
             "strong_buy_pct": settings.crypto_strong_buy_pct,
             "per_trade_cap_pct": settings.crypto_per_trade_cap_pct,

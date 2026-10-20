@@ -104,7 +104,8 @@ async def test_paper_portfolio_buy_then_sell(db):
     assert order.status == OrderStatus.PAPER
 
     state = await trader.get_paper_state(price_fn)
-    assert state["cash_eur"] == pytest.approx(970.0)
+    # €1000 - €30 order - €0.075 (0.25% buy fee) = €969.925
+    assert state["cash_eur"] == pytest.approx(969.925)
     assert state["positions"]["ADA-EUR"]["quantity"] == pytest.approx(60.0)
 
     prices["ADA-EUR"] = 0.60  # +20%
@@ -113,8 +114,9 @@ async def test_paper_portfolio_buy_then_sell(db):
 
     state = await trader.get_paper_state(price_fn)
     assert state["positions"] == {}
-    assert state["realised_pnl_eur"] == pytest.approx(6.0)
-    assert state["cash_eur"] == pytest.approx(1006.0)
+    # Gross PnL = €6.00, fees = (€30 + €36) * 0.25% = €0.165 -> Net PnL = round(5.835, 2) = €5.84
+    assert state["realised_pnl_eur"] == pytest.approx(5.84)
+    assert state["cash_eur"] == pytest.approx(1005.84)
 
 
 @pytest.mark.asyncio
@@ -387,7 +389,8 @@ async def test_live_trader_places_stop_loss_and_trailing_stop_updates(db, monkey
     assert len(triggered) == 1
     assert triggered[0]["reason"] == "bitvavo_native_stop_loss_filled"
     assert order.closed_at is not None
-    assert order.realised_pnl == pytest.approx((63050.0 - 60000.0) * 0.01)
+    # Gross PnL = 30.50, round-trip 0.25% fee on (600 + 630.50) = 3.07625 -> Net = 27.42
+    assert order.realised_pnl == pytest.approx(round((63050.0 - 60000.0) * 0.01 - (600.0 + 630.50) * 0.0025, 2))
 
 
 @pytest.mark.asyncio

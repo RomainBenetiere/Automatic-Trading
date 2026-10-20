@@ -206,7 +206,7 @@ export default function CryptoExecution() {
           </div>
           {paperPortfolio && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-              Budget initial : €{paperPortfolio.initial_budget_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              Budget initial : €{paperPortfolio.initial_budget_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • Frais Bitvavo : {paperPortfolio.fee_pct ?? 0.25}%/ordre (Total frais : €{(paperPortfolio.total_fees_eur ?? 0).toFixed(2)})
             </span>
           )}
         </div>
@@ -241,7 +241,7 @@ export default function CryptoExecution() {
                 €{(paperPortfolio.cash_eur ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 4 }}>
-                Prêt pour nouveaux achats
+                Net des frais Bitvavo ({paperPortfolio.fee_pct ?? 0.25}%)
               </div>
             </div>
 
@@ -260,7 +260,7 @@ export default function CryptoExecution() {
 
             <div className="card">
               <div className="card-header">
-                <span className="card-title">P&L Latent / Réalisé</span>
+                <span className="card-title">P&L Latent / Réalisé (Net)</span>
                 <Activity size={18} style={{ color: 'var(--accent-primary)', opacity: 0.7 }} />
               </div>
               <div className="card-value" style={{
@@ -286,7 +286,8 @@ export default function CryptoExecution() {
                 <th>Cours Actuel</th>
                 <th>Coût Investi</th>
                 <th>Valeur (EUR)</th>
-                <th>P&L Latent</th>
+                <th>Frais (A/V)</th>
+                <th>P&L Latent (Net)</th>
                 <th>Stop / Trailing</th>
                 <th>Take Profit</th>
                 <th>24h Change</th>
@@ -305,6 +306,7 @@ export default function CryptoExecution() {
                     <td className="cell-number" style={{ fontWeight: 600 }}>
                       €{paperPortfolio.cash_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
+                    <td className="cell-number">—</td>
                     <td className="cell-number">—</td>
                     <td className="cell-number">—</td>
                     <td className="cell-number">—</td>
@@ -331,6 +333,9 @@ export default function CryptoExecution() {
                           <td className="cell-number" style={{ fontWeight: 600 }}>
                             €{pos.market_value_eur?.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
+                          <td className="cell-number" style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                            €{(pos.fees_eur ?? 0).toFixed(2)}
+                          </td>
                           <td className={`cell-number ${
                             (pos.unrealised_pnl_eur || 0) > 0 ? 'cell-positive' : (pos.unrealised_pnl_eur || 0) < 0 ? 'cell-negative' : ''
                           }`}>
@@ -352,7 +357,7 @@ export default function CryptoExecution() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={11} className="empty-state" style={{ padding: '16px' }}>
+                      <td colSpan={12} className="empty-state" style={{ padding: '16px' }}>
                         Aucune position crypto ouverte en simulation Paper (100% Cash EUR)
                       </td>
                     </tr>
@@ -360,7 +365,7 @@ export default function CryptoExecution() {
                 </>
               ) : (
                 <tr>
-                  <td colSpan={11} className="empty-state">
+                  <td colSpan={12} className="empty-state">
                     {paperLoading ? 'Chargement du portefeuille Paper…' : 'Portefeuille Paper indisponible'}
                   </td>
                 </tr>
@@ -479,6 +484,14 @@ export default function CryptoExecution() {
                   <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Max €{guardrails.global_budget?.max_eur}</div>
                 </div>
               </div>
+
+              <div className="guardrail-item status-ok">
+                <ShieldCheck size={20} color="var(--color-success)" />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Execution Fee</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{guardrails.execution_fee?.pct ?? 0.25}% Bitvavo / order</div>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -500,8 +513,9 @@ export default function CryptoExecution() {
                 <th>Qty</th>
                 <th>Price</th>
                 <th>Value</th>
+                <th>Frais (0.25%)</th>
                 <th>Status</th>
-                <th>P&L</th>
+                <th>P&L (Net)</th>
                 <th>Raison / Clôture</th>
                 <th>Mode</th>
               </tr>
@@ -534,6 +548,9 @@ export default function CryptoExecution() {
                       <td className="cell-number">{o.quantity?.toFixed(6)}</td>
                       <td className="cell-number">{fmtPrice(o.price)}</td>
                       <td className="cell-number">{o.order_value_eur ? `€${o.order_value_eur.toFixed(2)}` : '—'}</td>
+                      <td className="cell-number" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        {o.fee_eur != null && o.fee_eur > 0 ? `€${o.fee_eur.toFixed(2)}` : '—'}
+                      </td>
                       <td>
                         <span style={{
                           fontSize: '0.75rem',
@@ -565,7 +582,7 @@ export default function CryptoExecution() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={10} className="empty-state">
+                  <td colSpan={11} className="empty-state">
                     {ordersLoading ? 'Loading…' : 'No orders yet'}
                   </td>
                 </tr>

@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/trading.db"
 
     # ── Crypto guardrails & sizing ──────────────────────────────────────
+    crypto_fee_pct: float = Field(default=0.25, ge=0.0)
     crypto_buy_pct: float = Field(default=3.0, ge=0.0)
     crypto_strong_buy_pct: float = Field(default=5.0, ge=0.0)
     crypto_per_trade_cap_pct: float = Field(default=5.0, ge=0.0)
@@ -64,6 +65,7 @@ class Settings(BaseSettings):
     crypto_max_allocation_pct: float = Field(default=20.0, ge=0.1)
 
     @field_validator(
+        "crypto_fee_pct",
         "crypto_buy_pct",
         "crypto_strong_buy_pct",
         "crypto_per_trade_cap_pct",
@@ -81,7 +83,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             cleaned = v.strip().rstrip("%").replace(",", ".").strip()
             if cleaned == "":
-                return 3.0
+                return 0.25
             return float(cleaned)
         return v
 

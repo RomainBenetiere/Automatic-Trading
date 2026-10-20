@@ -157,9 +157,10 @@ class PaperTrader:
         """Compute the simulated paper portfolio.
 
         Starting capital = CRYPTO_GLOBAL_BUDGET_EUR.
-        cash = start + realised P&L of closed lots − cost of open lots.
+        cash = start + realised P&L of closed lots (net of buy+sell fees) − cost of open lots − buy fee on open lots.
         """
         start = settings.crypto_global_budget_eur
+        fee_rate = settings.crypto_fee_pct / 100.0
 
         closed = await self.db.execute(
             select(func.coalesce(func.sum(Order.realised_pnl), 0.0)).where(
@@ -184,13 +185,15 @@ class PaperTrader:
             price = get_price_fn(symbol) or 0.0
             pos["value_eur"] = pos["quantity"] * price
 
-        cash = start + realised - open_cost
+        open_buy_fees = open_cost * fee_rate
+        cash = start + realised - open_cost - open_buy_fees
         portfolio_value = cash + sum(p["value_eur"] for p in positions.values())
         return {
             "cash_eur": cash,
             "positions": positions,
             "portfolio_value_eur": portfolio_value,
             "realised_pnl_eur": realised,
+            "open_buy_fees_eur": open_buy_fees,
         }
 
     async def _close_lots_for_sell(self, action: TradeAction, current_price: float) -> Order | None:
@@ -200,19 +203,26 @@ class PaperTrader:
             logger.info("Paper SELL %s skipped — no open paper lots", action.symbol)
             return None
 
+        fee_rate = settings.crypto_fee_pct / 100.0
         target_qty = action.quantity or sum(l.quantity or 0 for l in lots)
         closed_qty = 0.0
         total_pnl = 0.0
+        total_fees = 0.0
         now = datetime.utcnow()
         for lot in lots:
             if closed_qty >= target_qty * 0.999:
                 break
-            pnl = (current_price - (lot.price or 0)) * (lot.quantity or 0)
+            qty = lot.quantity or 0.0
+            entry_val = (lot.price or 0.0) * qty
+            exit_val = current_price * qty
+            fees = (entry_val + exit_val) * fee_rate
+            pnl = (exit_val - entry_val) - fees
             lot.realised_pnl = round(pnl, 2)
             lot.closed_at = now
-            lot.justification = f"{lot.justification} | CLOSED: {action.reason}"
-            closed_qty += lot.quantity or 0
+            lot.justification = f"{lot.justification} | CLOSED: {action.reason} (fee: €{fees:.2f})"
+            closed_qty += qty
             total_pnl += pnl
+            total_fees += fees
 
         # Audit record of the sell itself (P&L lives on the closed BUY lots)
         order = Order(
@@ -223,15 +233,15 @@ class PaperTrader:
             order_value_eur=round(closed_qty * current_price, 2),
             status=OrderStatus.PAPER,
             paper_mode=True,
-            justification=f"{action.reason} (realised €{total_pnl:.2f})",
+            justification=f"{action.reason} (net realised €{total_pnl:.2f}, fee: €{total_fees:.2f})",
             signals_snapshot=json.dumps(action.signals_snapshot),
             executed_at=now,
         )
         self.db.add(order)
         await self.db.flush()
         logger.info(
-            "Paper SELL %s: closed %.8f @ %.2f — PnL €%.2f",
-            action.symbol, closed_qty, current_price, total_pnl,
+            "Paper SELL %s: closed %.8f @ %.2f — Net PnL €%.2f (fees €%.2f)",
+            action.symbol, closed_qty, current_price, total_pnl, total_fees,
         )
         return order
 
@@ -259,6 +269,7 @@ class PaperTrader:
         result = await self.db.execute(stmt)
         open_orders = result.scalars().all()
 
+        fee_rate = settings.crypto_fee_pct / 100.0
         triggered = []
         for order in open_orders:
             price = get_price_fn(order.symbol)
@@ -285,25 +296,31 @@ class PaperTrader:
             )
 
             if should_close:
-                # Close the position
-                pnl = (price - (order.price or 0)) * (order.quantity or 0)
+                # Close the position (deduct 0.25% buy fee + 0.25% sell fee)
+                qty = order.quantity or 0.0
+                entry_val = (order.price or 0.0) * qty
+                exit_val = price * qty
+                fees = (entry_val + exit_val) * fee_rate
+                pnl = (exit_val - entry_val) - fees
                 order.realised_pnl = round(pnl, 2)
                 order.closed_at = datetime.utcnow()
-                order.justification = f"{order.justification} | CLOSED: {reason}"
+                order.justification = f"{order.justification} | CLOSED: {reason} (fee: €{fees:.2f})"
 
                 triggered.append({
                     "order_id": order.id,
                     "symbol": order.symbol,
                     "reason": reason,
-                    "pnl": pnl,
+                    "pnl": round(pnl, 2),
+                    "fees_eur": round(fees, 2),
                     "close_price": price,
                 })
 
                 logger.info(
-                    "Paper position CLOSED: %s — %s — PnL: €%.2f",
+                    "Paper position CLOSED: %s — %s — Net PnL: €%.2f (fees: €%.2f)",
                     order.symbol,
                     reason,
                     pnl,
+                    fees,
                 )
 
         await self.db.flush()
